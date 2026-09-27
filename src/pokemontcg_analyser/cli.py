@@ -159,6 +159,17 @@ def matches_notes(match_id: int = typer.Argument(...)) -> None:
     console.print(table)
 
 
+@app.command()
+def serve(
+    port: int = typer.Option(8000, "--port", help="Port to serve the review app on"),
+) -> None:
+    """Run the local review web app: watch recordings and add notes in the browser."""
+    import uvicorn
+
+    console.print(f"Serving on http://127.0.0.1:{port} (Ctrl+C to stop)")
+    uvicorn.run("pokemontcg_analyser.webapp:app", host="127.0.0.1", port=port)
+
+
 @cards_app.command("sync")
 def cards_sync() -> None:
     """Download the full card database from pokemontcg.io into a local cache."""

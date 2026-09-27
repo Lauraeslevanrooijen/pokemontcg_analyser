@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}Matches — Pokémon TCG Live analyser{% endblock %}
+{% block content %}
+  <h1>Matches</h1>
+
+  {% if matches %}
+    <table>
+      <thead>
+        <tr><th>Played</th><th>Deck</th><th>Opponent</th><th>Result</th><th>Video</th></tr>
+      </thead>
+      <tbody>
+        {% for m in matches %}
+          <tr class="clickable" onclick="window.location='/matches/{{ m.id }}'">
+            <td>{{ m.played_at_utc[:16].replace('T', ' ') }}</td>
+            <td>{{ m.deck }}</td>
+            <td>{{ m.opponent_deck or '—' }}</td>
+            <td><span class="badge badge-{{ m.result }}">{{ m.result }}</span></td>
+            <td>{{ 'yes' if m.video_file else '—' }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    <p class="muted">No matches logged yet.</p>
+  {% endif %}
+
+  <h2>Log a match</h2>
+  <form class="inline" method="post" action="/matches">
+    <input name="deck" placeholder="Your deck" required>
+    <input name="opponent_deck" placeholder="Opponent deck">
+    <select name="result" required>
+      <option value="win">Win</option>
+      <option value="loss">Loss</option>
+      <option value="tie">Tie</option>
+    </select>
+    <input name="notes" placeholder="Notes (optional)">
+    <button type="submit">Log match</button>
+  </form>
+{% endblock %}

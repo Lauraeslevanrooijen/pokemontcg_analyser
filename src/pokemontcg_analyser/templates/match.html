@@ -1,0 +1,104 @@
+{% extends "base.html" %}
+{% block title %}{{ match.deck }} vs {{ match.opponent_deck or '?' }} — Pokémon TCG Live analyser{% endblock %}
+{% block content %}
+  <p><a href="/" class="muted">&larr; All matches</a></p>
+  <h1>
+    {{ match.deck }} vs {{ match.opponent_deck or '?' }}
+    <span class="badge badge-{{ match.result }}">{{ match.result }}</span>
+  </h1>
+
+  {% if video_filename %}
+    <video id="player" controls src="/media/{{ video_filename }}"></video>
+  {% else %}
+    <p class="muted">No recording attached to this match.</p>
+  {% endif %}
+
+  {% if video_filename %}
+    <div class="panel" style="margin-top: 16px;">
+      <strong>Add a note at the current video time</strong>
+      <form class="inline" id="note-form" style="grid-template-columns: 1fr auto;">
+        <input id="note-text" placeholder="What's happening right now?" required>
+        <button type="submit">Add note</button>
+      </form>
+    </div>
+  {% endif %}
+
+  <h2>Timeline</h2>
+
+  {% if video_filename and not events %}
+    <form method="post" action="/matches/{{ match.id }}/analyze">
+      <button type="submit">Run scene-change analysis</button>
+    </form>
+  {% endif %}
+
+  <table id="events-table">
+    <thead>
+      <tr><th>Offset</th><th>Kind</th><th>Detail</th></tr>
+    </thead>
+    <tbody>
+      {% for e in events %}
+        <tr class="{{ 'clickable' if e.video_offset_seconds is not none else '' }}"
+            {% if e.video_offset_seconds is not none %}data-offset="{{ e.video_offset_seconds }}"{% endif %}>
+          <td>{{ '%.1fs' % e.video_offset_seconds if e.video_offset_seconds is not none else '—' }}</td>
+          <td>{{ e.kind }}</td>
+          <td>{{ e.detail or '' }}</td>
+        </tr>
+      {% else %}
+        <tr><td colspan="3" class="muted">No notes or events yet.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  <script>
+    const player = document.getElementById('player');
+    const matchId = {{ match.id }};
+
+    function seekTo(offset) {
+      if (player && offset !== null && offset !== undefined) {
+        player.currentTime = parseFloat(offset);
+        player.play();
+      }
+    }
+
+    document.getElementById('events-table').addEventListener('click', (ev) => {
+      const row = ev.target.closest('tr[data-offset]');
+      if (row) seekTo(row.dataset.offset);
+    });
+
+    const noteForm = document.getElementById('note-form');
+    if (noteForm) {
+      noteForm.addEventListener('submit', async (ev) => {
+        ev.preventDefault();
+        const textInput = document.getElementById('note-text');
+        const text = textInput.value.trim();
+        if (!text) return;
+        const offset = player ? player.currentTime : null;
+
+        const resp = await fetch(`/matches/${matchId}/notes`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text, offset_seconds: offset }),
+        });
+        if (!resp.ok) {
+          alert('Failed to save note.');
+          return;
+        }
+        const note = await resp.json();
+
+        const tbody = document.querySelector('#events-table tbody');
+        const emptyRow = tbody.querySelector('td[colspan]');
+        if (emptyRow) emptyRow.closest('tr').remove();
+
+        const tr = document.createElement('tr');
+        tr.className = 'clickable';
+        tr.dataset.offset = note.offset_seconds;
+        tr.innerHTML = `<td>${note.offset_seconds != null ? note.offset_seconds.toFixed(1) + 's' : '—'}</td>` +
+                        `<td>note</td><td></td>`;
+        tr.children[2].textContent = note.detail;
+        tbody.appendChild(tr);
+
+        textInput.value = '';
+      });
+    }
+  </script>
+{% endblock %}

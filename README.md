@@ -19,6 +19,9 @@ Early scaffold. Working today:
 - `cards sync` — pull the card database from the public
   [pokemontcg.io](https://pokemontcg.io) API and cache it locally, as the
   foundation for card recognition.
+- `serve` — a local web app for reviewing a recording: play the video and
+  drop timestamped notes on it as you watch, without switching to a
+  terminal.
 
 Not built yet: actual card recognition (matching video frames to specific
 cards) and automatic win/loss detection — both need real recorded footage to
@@ -61,6 +64,10 @@ pokemontcg-analyser cards sync
 
 # Analyze a recording for scene-change boundaries
 pokemontcg-analyser analyze recordings/2026-09-27_190000.mp4
+
+# Open the review app (watch a recording + take notes in the browser)
+pokemontcg-analyser serve
+# -> http://127.0.0.1:8000
 ```
 
 ## Project layout
@@ -71,6 +78,8 @@ src/pokemontcg_analyser/
   cards.py      pokemontcg.io client + local card cache
   storage.py    SQLite schema + match logging/stats
   analysis.py   frame extraction + scene-change detection
+  webapp.py     local review app (FastAPI + Jinja2 templates)
+  templates/    review app HTML
   cli.py        command-line entry point
 tests/
 ```

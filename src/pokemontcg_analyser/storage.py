@@ -35,7 +35,8 @@ CREATE TABLE IF NOT EXISTS match_events (
 
 
 @contextmanager
-def connect(db_path: Path = DEFAULT_DB_PATH) -> Iterator[sqlite3.Connection]:
+def connect(db_path: Path | None = None) -> Iterator[sqlite3.Connection]:
+    db_path = db_path if db_path is not None else DEFAULT_DB_PATH
     db_path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(db_path)
     conn.execute("PRAGMA foreign_keys = ON")
@@ -65,7 +66,7 @@ def log_match(
     opponent_deck: str | None = None,
     notes: str | None = None,
     video_file: str | None = None,
-    db_path: Path = DEFAULT_DB_PATH,
+    db_path: Path | None = None,
 ) -> int:
     with connect(db_path) as conn:
         cur = conn.execute(
@@ -85,7 +86,15 @@ def log_match(
         return cur.lastrowid
 
 
-def list_matches(db_path: Path = DEFAULT_DB_PATH) -> list[Match]:
+def get_match(match_id: int, db_path: Path | None = None) -> Match | None:
+    with connect(db_path) as conn:
+        row = conn.execute(
+            "SELECT * FROM matches WHERE id = ?", (match_id,)
+        ).fetchone()
+        return Match(**dict(row)) if row is not None else None
+
+
+def list_matches(db_path: Path | None = None) -> list[Match]:
     with connect(db_path) as conn:
         rows = conn.execute(
             "SELECT * FROM matches ORDER BY played_at_utc DESC"
@@ -96,7 +105,7 @@ def list_matches(db_path: Path = DEFAULT_DB_PATH) -> list[Match]:
 def add_events(
     match_id: int,
     events: list[tuple[float | None, str, str | None]],
-    db_path: Path = DEFAULT_DB_PATH,
+    db_path: Path | None = None,
 ) -> None:
     with connect(db_path) as conn:
         conn.executemany(
@@ -112,11 +121,20 @@ def add_note(
     match_id: int,
     text: str,
     offset_seconds: float | None = None,
-    db_path: Path = DEFAULT_DB_PATH,
-) -> None:
+    db_path: Path | None = None,
+) -> int:
     """Attach a timestamped note to a match. Omit offset for a note about
-    the match as a whole (e.g. a post-game reflection)."""
-    add_events(match_id, [(offset_seconds, "note", text)], db_path=db_path)
+    the match as a whole (e.g. a post-game reflection). Returns the new
+    event's id."""
+    with connect(db_path) as conn:
+        cur = conn.execute(
+            """
+            INSERT INTO match_events (match_id, video_offset_seconds, kind, detail)
+            VALUES (?, ?, 'note', ?)
+            """,
+            (match_id, offset_seconds, text),
+        )
+        return cur.lastrowid
 
 
 @dataclass(frozen=True)
@@ -128,7 +146,7 @@ class Event:
     detail: str | None
 
 
-def list_events(match_id: int, db_path: Path = DEFAULT_DB_PATH) -> list[Event]:
+def list_events(match_id: int, db_path: Path | None = None) -> list[Event]:
     """A match's events (scene changes, notes, ...) in chronological order.
     Events without an offset (whole-match notes) sort first."""
     with connect(db_path) as conn:
@@ -156,7 +174,7 @@ class Stats:
         return self.wins / self.total if self.total else 0.0
 
 
-def compute_stats(db_path: Path = DEFAULT_DB_PATH) -> Stats:
+def compute_stats(db_path: Path | None = None) -> Stats:
     matches = list_matches(db_path)
     by_deck: dict[str, list[int]] = {}
     wins = losses = ties = 0
