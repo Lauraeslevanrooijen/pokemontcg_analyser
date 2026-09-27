@@ -91,6 +91,7 @@ def record(
     out_dir: Path,
     framerate: int = 30,
     capture_cursor: bool = True,
+    max_width: int = 1920,
 ) -> Path:
     """Record the given avfoundation device to an MP4 until interrupted.
 
@@ -143,6 +144,13 @@ def record(
         # back to frame 0 instead. Hardware encoding keeps up in real time.
         "-g",
         str(framerate * 2),
+        # Native display resolution (e.g. 3420x2214 on a Retina screen) is
+        # far more pixels than a browser can smoothly decode in real time,
+        # and captures the whole desktop, not just the game — downscaling
+        # keeps card text perfectly legible while cutting decode load
+        # roughly in half and shrinking file size a lot.
+        "-vf",
+        f"scale='min({max_width},iw)':-2",
         "-pix_fmt",
         "yuv420p",
         "-movflags",

@@ -36,10 +36,15 @@ def record(
     device: int = typer.Option(..., "--device", help="Device index from list-devices"),
     out: Path = typer.Option(Path("recordings"), "--out", help="Output directory"),
     framerate: int = typer.Option(30, "--framerate"),
+    max_width: int = typer.Option(
+        1920, "--max-width", help="Downscale capture to this width (keeps aspect ratio)"
+    ),
 ) -> None:
     """Record a Pokémon TCG Live session to video. Ctrl+C to stop."""
     console.print(f"Recording device {device} to {out}/ — press Ctrl+C to stop.")
-    video_path = recorder.record(device_index=device, out_dir=out, framerate=framerate)
+    video_path = recorder.record(
+        device_index=device, out_dir=out, framerate=framerate, max_width=max_width
+    )
     console.print(f"Saved recording: {video_path}")
 
 
