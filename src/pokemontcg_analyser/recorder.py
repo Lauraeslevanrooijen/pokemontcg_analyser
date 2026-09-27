@@ -125,8 +125,24 @@ def record(
         "1" if capture_cursor else "0",
         "-i",
         f"{device_index}:none",
+        # avfoundation only pushes a new frame when the screen actually
+        # changes, not at a steady rate (a 370s recording once measured
+        # ~1.6fps average) — so a frame-count-based keyframe interval (-g)
+        # ends up wildly uneven in real time. -r forces ffmpeg to pad with
+        # duplicate frames into a true constant frame rate output, so -g
+        # below means what it says (a keyframe every ~2s of real time).
+        "-r",
+        str(framerate),
         "-vcodec",
-        "libx264",
+        "h264_videotoolbox",
+        # Software libx264 also couldn't keep up in real time at Retina
+        # capture resolutions, which — combined with the sparse input above
+        # — left huge stretches of video with no keyframe at all (seen: 8
+        # keyframes across a 370s recording). Browsers need a nearby
+        # keyframe to seek, so most of the video was unseekable and jumped
+        # back to frame 0 instead. Hardware encoding keeps up in real time.
+        "-g",
+        str(framerate * 2),
         "-pix_fmt",
         "yuv420p",
         "-movflags",
