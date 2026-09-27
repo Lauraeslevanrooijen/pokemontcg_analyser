@@ -1,0 +1,17 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.DS_Store
+
+# runtime data — recordings and local dbs shouldn't be committed
+recordings/
+*.mp4
+*.mov
+data/cards.json
+data/*.db
