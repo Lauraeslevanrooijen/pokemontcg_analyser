@@ -129,6 +129,8 @@ def record(
         "libx264",
         "-pix_fmt",
         "yuv420p",
+        "-movflags",
+        "+faststart",
         str(video_path),
     ]
     # ffmpeg reads a keypress on stdin to stop cleanly; run attached so the
