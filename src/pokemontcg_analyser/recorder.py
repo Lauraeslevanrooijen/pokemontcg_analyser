@@ -142,8 +142,25 @@ def record(
         # keyframes across a 370s recording). Browsers need a nearby
         # keyframe to seek, so most of the video was unseekable and jumped
         # back to frame 0 instead. Hardware encoding keeps up in real time.
+        #
+        # A forced keyframe is a full intra-coded frame with no inter-frame
+        # prediction, and this is UI/text content (expensive to intra-code)
+        # sitting on top of a mostly-static screen — measured keyframes at
+        # 300-600KB next to ~700-byte neighboring frames, a 700-800x jump
+        # the browser has to decode in one shot. Forcing one every 2s (the
+        # first fix) made that spike happen throughout the whole video, not
+        # just where it was noticed. 5s keeps seeking plenty precise for
+        # jumping to a labeled event while roughly halving how often it
+        # happens, and the bitrate cap below shrinks each spike by ~2.5x
+        # (measured 157KB->61KB) without visibly hurting card legibility.
         "-g",
-        str(framerate * 2),
+        str(framerate * 5),
+        "-b:v",
+        "3M",
+        "-maxrate",
+        "5M",
+        "-bufsize",
+        "6M",
         # Native display resolution (e.g. 3420x2214 on a Retina screen) is
         # far more pixels than a browser can smoothly decode in real time,
         # and captures the whole desktop, not just the game — downscaling
