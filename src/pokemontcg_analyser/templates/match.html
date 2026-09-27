@@ -9,6 +9,39 @@
 
   {% if video_filename %}
     <video id="player" controls src="/media/{{ video_filename }}"></video>
+
+    <div class="scrubber">
+      <input type="range" id="scrub" min="0" max="0" step="0.01" value="0">
+      <div id="scrub-markers" class="scrub-markers"></div>
+    </div>
+    <p class="muted" style="font-size: 0.85em; margin-top: 4px;">
+      Drag to scrub. <span style="color: var(--accent);">&#9679;</span> notes,
+      <span style="color: var(--muted);">&#9679;</span> detected scene changes.
+    </p>
+
+    <style>
+      .scrubber { position: relative; margin-top: 10px; height: 28px; }
+      .scrubber input[type="range"] {
+        width: 100%; margin: 0; position: absolute; top: 8px; height: 12px;
+        -webkit-appearance: none; appearance: none; background: transparent; z-index: 2;
+      }
+      .scrubber input[type="range"]::-webkit-slider-runnable-track {
+        height: 4px; background: var(--border); border-radius: 2px;
+      }
+      .scrubber input[type="range"]::-webkit-slider-thumb {
+        -webkit-appearance: none; margin-top: -6px;
+        width: 16px; height: 16px; border-radius: 50%;
+        background: var(--accent); cursor: pointer; border: 2px solid var(--bg);
+      }
+      .scrub-markers {
+        position: absolute; top: 8px; left: 0; right: 0; height: 4px; pointer-events: none;
+      }
+      .scrub-marker {
+        position: absolute; top: -3px; width: 3px; height: 10px; border-radius: 1px;
+        background: var(--muted); cursor: pointer; pointer-events: auto; transform: translateX(-1.5px);
+      }
+      .scrub-marker.note { background: var(--accent); width: 4px; }
+    </style>
   {% else %}
     <p class="muted">No recording attached to this match.</p>
   {% endif %}
@@ -52,6 +85,8 @@
   <script>
     const player = document.getElementById('player');
     const matchId = {{ match.id }};
+    const scrub = document.getElementById('scrub');
+    const scrubMarkers = document.getElementById('scrub-markers');
 
     function seekTo(offset) {
       if (player && offset !== null && offset !== undefined) {
@@ -64,6 +99,36 @@
       const row = ev.target.closest('tr[data-offset]');
       if (row) seekTo(row.dataset.offset);
     });
+
+    function renderMarkers() {
+      if (!scrub || !scrubMarkers || !player.duration) return;
+      scrubMarkers.innerHTML = '';
+      document.querySelectorAll('#events-table tbody tr[data-offset]').forEach((row) => {
+        const offset = parseFloat(row.dataset.offset);
+        const kind = row.children[1].textContent.trim();
+        const detail = row.children[2].textContent.trim();
+        const pct = Math.min(100, Math.max(0, (offset / player.duration) * 100));
+        const marker = document.createElement('div');
+        marker.className = 'scrub-marker' + (kind === 'note' ? ' note' : '');
+        marker.style.left = pct + '%';
+        marker.title = `${offset.toFixed(1)}s — ${detail || kind}`;
+        marker.addEventListener('click', () => seekTo(offset));
+        scrubMarkers.appendChild(marker);
+      });
+    }
+
+    if (player && scrub) {
+      player.addEventListener('loadedmetadata', () => {
+        scrub.max = player.duration;
+        renderMarkers();
+      });
+      player.addEventListener('timeupdate', () => {
+        if (document.activeElement !== scrub) scrub.value = player.currentTime;
+      });
+      scrub.addEventListener('input', () => {
+        player.currentTime = parseFloat(scrub.value);
+      });
+    }
 
     const noteForm = document.getElementById('note-form');
     if (noteForm) {
@@ -96,6 +161,7 @@
                         `<td>note</td><td></td>`;
         tr.children[2].textContent = note.detail;
         tbody.appendChild(tr);
+        renderMarkers();
 
         textInput.value = '';
       });
