@@ -148,6 +148,20 @@ class BattleLog:
                     count(one.group(2))
         return played
 
+    def plays(self, turn: LogTurn) -> list[tuple[int, str]]:
+        """The card plays in a turn by its own player, as (position of the
+        action in the turn, card): the moments the game shows a card
+        enlarged."""
+        found = []
+        for index, action in enumerate(turn.actions):
+            for pattern, group in ((_EVOLVED, 3), (_ATTACHED, 2), (_PLAYED, 2)):
+                hit = pattern.match(action.text)
+                if hit:
+                    if hit.group(1) == turn.player:
+                        found.append((index, hit.group(group)))
+                    break
+        return found
+
     def cards_seen(self, player: str | None) -> set[str]:
         """Every card the log shows to be in a player's deck: played, or
         named when drawn or discarded from hand."""

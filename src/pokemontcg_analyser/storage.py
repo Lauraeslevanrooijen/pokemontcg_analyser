@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -37,7 +38,8 @@ CREATE TABLE IF NOT EXISTS matches (
     lesson TEXT,
     deck_version_id INTEGER REFERENCES deck_versions(id),
     battle_log TEXT,
-    opponent_auto INTEGER NOT NULL DEFAULT 0
+    opponent_auto INTEGER NOT NULL DEFAULT 0,
+    log_times TEXT
 );
 
 CREATE TABLE IF NOT EXISTS settings (
@@ -101,6 +103,8 @@ def connect(db_path: Path | None = None) -> Iterator[sqlite3.Connection]:
             conn.execute("ALTER TABLE matches ADD COLUMN deck_version_id INTEGER")
         if "battle_log" not in columns:
             conn.execute("ALTER TABLE matches ADD COLUMN battle_log TEXT")
+        if "log_times" not in columns:
+            conn.execute("ALTER TABLE matches ADD COLUMN log_times TEXT")
         if "opponent_auto" not in columns:
             conn.execute("ALTER TABLE matches ADD COLUMN opponent_auto INTEGER NOT NULL DEFAULT 0")
         yield conn
@@ -128,6 +132,9 @@ class Match:
     # 1 when the opponent's deck was named from the battle log rather than
     # typed in: such a name is a guess, and is not copied to later matches.
     opponent_auto: int = 0
+    # JSON, {"turn-action": seconds}: where in the recording the plays of
+    # the battle log were found.
+    log_times: str | None = None
 
 
 def log_match(
@@ -207,6 +214,14 @@ def set_turn_order(
     with connect(db_path) as conn:
         conn.execute(
             "UPDATE matches SET turn_order = ? WHERE id = ?", (turn_order, match_id)
+        )
+
+
+def set_log_times(match_id: int, times: dict[str, float] | None, db_path: Path | None = None) -> None:
+    with connect(db_path) as conn:
+        conn.execute(
+            "UPDATE matches SET log_times = ? WHERE id = ?",
+            (json.dumps(times) if times else None, match_id),
         )
 
 
@@ -361,6 +376,12 @@ def shift_offsets(match_id: int, seconds: float, db_path: Path | None = None) ->
             """,
             (seconds, match_id),
         )
+        row = conn.execute("SELECT log_times FROM matches WHERE id = ?", (match_id,)).fetchone()
+        if row is not None and row["log_times"]:
+            moved = {k: max(0.0, v - seconds) for k, v in json.loads(row["log_times"]).items()}
+            conn.execute(
+                "UPDATE matches SET log_times = ? WHERE id = ?", (json.dumps(moved), match_id)
+            )
 
 
 def list_matches(db_path: Path | None = None) -> list[Match]:

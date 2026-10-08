@@ -9,6 +9,7 @@ data/matches.db or source over HTTP.
 
 from __future__ import annotations
 
+import json
 import os
 import queue
 import shutil
@@ -27,7 +28,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 
-from . import battlelog, cards, decks, insights, recorder, storage, transcribe, turns
+from . import battlelog, cards, decks, insights, logtimes, recorder, storage, transcribe, turns
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
 RECORDINGS_DIR = Path("recordings")
@@ -596,6 +597,7 @@ def match_detail(request: Request, match_id: int):
             "can_transcribe": transcribe.available(),
             "battle_log": _battle_log_json(match.battle_log, match),
             "detecting_turns": match_id in _detecting,
+            "log_times": json.loads(match.log_times) if match.log_times else {},
             "matchup_note": storage.matchup_notes(db_path=db_path()).get(match.opponent_deck or "", ""),
             "known_decks": sorted(
                 {
@@ -773,6 +775,7 @@ def set_battle_log(match_id: int, body: BattleLogIn):
             status_code=400, detail="This doesn't look like a battle log: no turns found in it"
         )
     _apply_battle_log(match_id, text, log)
+    locate_plays_in_background(match_id)
     updated = _require_match(match_id)
     return {
         "battle_log": _battle_log_json(text, updated),
@@ -1020,15 +1023,59 @@ def _store_detected_turns(match_id: int, replace: bool) -> list[turns.Turn]:
         return found
 
 
-def detect_turns_in_background(match_id: int) -> None:
-    """Start looking for turns right away, so they are there (or nearly)
-    by the time the review page is open."""
+def _store_log_times(match_id: int) -> None:
+    """Find where the plays of the battle log happen in the recording.
+    Needs the log's turns to line up one to one with the turn markers, and
+    the deck's saved list for the card pictures; only my own plays are
+    looked for, as the opponent's cards have no known printing."""
+    with _video_lock:
+        match = storage.get_match(match_id, db_path=db_path())
+        if match is None or not match.video_file or not match.battle_log:
+            return
+        log = battlelog.parse(match.battle_log)
+        marks = sorted(
+            e.video_offset_seconds
+            for e in storage.list_events(match_id, db_path=db_path())
+            if e.kind == "turn" and e.video_offset_seconds is not None
+        )
+        if not marks or len(marks) != len(log.turns):
+            storage.set_log_times(match_id, None, db_path=db_path())
+            return
+        video_path = RECORDINGS_DIR / Path(match.video_file).name
+        ends = marks[1:] + [recorder.video_duration(video_path)]
+        listed = _deck_cards(match)
+        plays: list[list[logtimes.Play]] = []
+        for turn in log.turns:
+            turn_plays = []
+            if turn.player == log.me:
+                for action, card in log.plays(turn):
+                    printing = listed.get(card)
+                    picture = (
+                        cards.image_path(printing.set_code, printing.number)
+                        if printing is not None and printing.printing
+                        else None
+                    )
+                    if picture is not None:
+                        turn_plays.append((action, picture))
+            plays.append(turn_plays)
+        found = logtimes.find_play_times(video_path, list(zip(marks, ends)), plays)
+        storage.set_log_times(
+            match_id,
+            {f"{turn}-{action}": seconds for (turn, action), seconds in found.items()},
+            db_path=db_path(),
+        )
+
+
+def _in_background(match_id: int, *jobs) -> None:
+    """Run jobs for a match one after another off the request, counted in
+    `_detecting` so the page knows to wait for them."""
 
     def work() -> None:
         try:
-            _store_detected_turns(match_id, replace=False)
+            for job in jobs:
+                job()
         except Exception:
-            # The button on the page still works; leave a trace in the log.
+            # The buttons on the page still work; leave a trace in the log.
             traceback.print_exc()
         finally:
             with _detecting_lock:
@@ -1041,6 +1088,20 @@ def detect_turns_in_background(match_id: int) -> None:
     threading.Thread(target=work, daemon=True).start()
 
 
+def locate_plays_in_background(match_id: int) -> None:
+    _in_background(match_id, lambda: _store_log_times(match_id))
+
+
+def detect_turns_in_background(match_id: int) -> None:
+    """Start looking for turns right away, so they are there (or nearly)
+    by the time the review page is open; then for the plays of the log."""
+    _in_background(
+        match_id,
+        lambda: _store_detected_turns(match_id, replace=False),
+        lambda: _store_log_times(match_id),
+    )
+
+
 def _timeline_json(match_id: int) -> dict:
     # Whether a search is still running is asked first: if it isn't, what
     # is read after this is the finished result, not a half-written one.
@@ -1050,6 +1111,7 @@ def _timeline_json(match_id: int) -> dict:
         "events": [_event_json(e) for e in storage.list_events(match_id, db_path=db_path())],
         "turn_order": match.turn_order,
         "detecting": detecting,
+        "log_times": json.loads(match.log_times) if match.log_times else {},
     }
 
 
@@ -1071,6 +1133,7 @@ def detect_turns(match_id: int):
         raise HTTPException(status_code=500, detail=f"Could not read the recording: {exc}")
     if not found:
         raise HTTPException(status_code=422, detail="No turns found in this recording")
+    locate_plays_in_background(match_id)
     return _timeline_json(match_id)
 
 

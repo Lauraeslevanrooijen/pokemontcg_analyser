@@ -4,9 +4,10 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
+import json
 import time
 
-from pokemontcg_analyser import cards, recorder, storage, transcribe, turns, webapp
+from pokemontcg_analyser import cards, logtimes, recorder, storage, transcribe, turns, webapp
 
 
 @pytest.fixture()
@@ -22,6 +23,8 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
     monkeypatch.setattr(webapp, "BACKUP_DIR", tmp_path / "backups")
     # No test should read a real video; those that want turns say so.
     monkeypatch.setattr(turns, "detect_turns", lambda path: [])
+    monkeypatch.setattr(logtimes, "find_play_times", lambda *args: {})
+    monkeypatch.setattr(recorder, "video_duration", lambda path: 600.0)
     monkeypatch.setattr(recorder, "game_crop", lambda: None)
     # No test should load the real speech model.
     monkeypatch.setattr(transcribe, "available", lambda: False)
@@ -865,3 +868,13 @@ def test_a_guessed_opponent_name_is_not_passed_on(client: TestClient) -> None:
     assert storage.get_match(first.id).opponent_auto == 0
     client.post("/matches", data=data)
     assert max(storage.list_matches(), key=lambda m: m.id).opponent_deck == "Banette"
+
+
+def test_trimming_moves_the_log_times_along(client: TestClient) -> None:
+    match_id = storage.log_match(deck="Pult", result="win")
+    storage.set_log_times(match_id, {"2-1": 95.0, "2-4": 20.0})
+
+    storage.shift_offsets(match_id, 60.0)
+
+    assert json.loads(storage.get_match(match_id).log_times) == {"2-1": 35.0, "2-4": 0.0}
+    assert client.get(f"/matches/{match_id}/timeline").json()["log_times"] == {"2-1": 35.0, "2-4": 0.0}

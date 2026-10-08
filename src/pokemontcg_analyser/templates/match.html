@@ -297,6 +297,8 @@
     let gameStart = {{ match.game_start_seconds|tojson }};
     const CAN_TRANSCRIBE = {{ can_transcribe|tojson }};
     let battleLog = {{ battle_log|tojson }};
+    // {"turn-action": seconds}: where plays from the log were found in the video
+    let logTimes = {{ log_times|tojson }};
 
     const player = document.getElementById('player');
     const scrub = document.getElementById('scrub');
@@ -571,9 +573,30 @@
       const count = `${title} · ${actions.length} ${actions.length === 1 ? 'action' : 'actions'}`;
       block.appendChild(el('summary', '', comments.length ? `${count} · ${comments.length} ${comments.length === 1 ? 'comment' : 'comments'}` : count));
       const list = el('ol');
+      // A line whose play was found in the video jumps to it. Lines after
+      // it in the turn go to that same moment, as the nearest thing known;
+      // before any, to the start of the turn.
+      const marks = sortedEvents().filter((e) => e.kind === 'turn');
+      let nearest = turn >= 1 && marks[turn - 1] ? marks[turn - 1].offset_seconds : null;
       actions.forEach((action, index) => {
         const item = el('li', /\bused\b|Knocked Out|Prize card|\bwins?\b|conceded/.test(action.text) ? 'strong' : '');
-        item.appendChild(el('span', '', action.text));
+        const exact = logTimes[`${turn}-${index}`];
+        if (exact !== undefined) nearest = exact;
+        const text = el('span', '', action.text);
+        if (player && exact !== undefined) {
+          const at = el('span', 'at', formatTime(exact));
+          at.title = 'Found in the video — click to watch';
+          // a moment before, to see the play happen
+          at.addEventListener('click', () => seekTo(Math.max(0, exact - 1.5)));
+          item.appendChild(at);
+        }
+        if (player && nearest !== null) {
+          const about = nearest;
+          text.style.cursor = 'pointer';
+          text.title = exact !== undefined ? 'Click to watch' : 'Click to jump to about here in the video';
+          text.addEventListener('click', () => seekTo(Math.max(0, about - 1.5)));
+        }
+        item.appendChild(text);
         const add = el('button', 'log-comment-add', '+ comment');
         add.type = 'button';
         add.title = 'Comment on this line';
@@ -759,6 +782,7 @@
       renderOpponentPokemon();
       renderTurnOrder();
       render();
+      followDetection();  // the plays of the new log are located in the video
       if (saved.result_changed) alert(`The battle log says this was a ${saved.result}; the result has been corrected.`);
     });
 
@@ -1108,7 +1132,7 @@
       const button = document.getElementById('detect-button');
       if (!button) return;
       button.disabled = true;
-      button.textContent = 'Detecting turns…';
+      button.textContent = 'Working…';
       const timer = setInterval(async () => {
         const resp = await fetch(`/matches/${matchId}/timeline`);
         if (!resp.ok) return clearInterval(timer);
@@ -1121,6 +1145,7 @@
         const known = new Set(events.map((e) => e.id));
         events = events.concat(latest.events.filter((e) => !known.has(e.id)));
         turnOrder = latest.turn_order;
+        logTimes = latest.log_times;
         renderTurnOrder();
         if (editingId === null) render();
       }, 1500);
@@ -1145,6 +1170,7 @@
       turnOrder = result.turn_order;
       renderTurnOrder();
       render();
+      if (result.detecting) followDetection();  // the plays of the log are located next
     }
 
     const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 2, 3];

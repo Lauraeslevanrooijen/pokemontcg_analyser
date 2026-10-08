@@ -43,7 +43,9 @@ Early scaffold. Working today:
   logging the match or on its review page. The timeline then shows what
   happened in each turn, and the result and who went first come from the
   log. The log has no timestamps; it lines up with the video through the
-  turn markers. Any line of the log can be commented on and labelled, like
+  turn markers, and your own card plays are then looked for in the video
+  (the game shows a played card enlarged), so those lines jump to their
+  moment. Any line of the log can be commented on and labelled, like
   a note on the video. From the log the review page also shows the opening hand
   and a chart of Prize cards taken per turn, the opponent's deck gets a
   name when you gave none, and the Stats page compares opening hands across
@@ -131,6 +133,7 @@ src/pokemontcg_analyser/
   insights.py   cross-match stats and labelled moments
   decks.py      decklist parsing and version diffs
   battlelog.py  parser for the game's exported battle log
+  logtimes.py   finds the log's card plays in the recording
   turns.py      turn detection from the ring around the board
   transcribe.py spoken notes to text (faster-whisper, optional)
   desktop.py    desktop-app window + macOS .app launcher
