@@ -423,3 +423,26 @@ def test_recording_with_voice_passes_the_microphone(
     assert audio == [1, None]
     resp = client.post("/recording/start", data={"voice": "true", "microphone": "Unplugged headset"})
     assert resp.status_code == 400
+
+
+def test_decks_page_shows_versions_with_their_records(client: TestClient) -> None:
+    storage.log_match(deck="Pult", result="loss")
+    resp = client.post(
+        "/decks",
+        data={"deck": "Pult", "decklist": "4 Dragapult ex TWM 130\n3 Iono PAL 185"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    storage.log_match(deck="Pult", result="win")
+    client.post(
+        "/decks",
+        data={"deck": "Pult", "decklist": "4 Dragapult ex TWM 130\n4 Iono PAL 185", "note": "max Iono"},
+    )
+
+    page = client.get("/decks").text
+
+    assert "Before any saved list" in page
+    assert "max Iono" in page
+    assert "+1</span> Iono PAL 185" in page
+    assert "8 cards" in page
+    assert client.post("/decks", data={"deck": " ", "decklist": "x"}).status_code == 400

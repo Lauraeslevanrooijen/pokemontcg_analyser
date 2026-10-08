@@ -34,7 +34,16 @@ CREATE TABLE IF NOT EXISTS matches (
     video_file TEXT,
     turn_order TEXT CHECK (turn_order IN ('first', 'second')),
     game_start_seconds REAL,
-    lesson TEXT
+    lesson TEXT,
+    deck_version_id INTEGER REFERENCES deck_versions(id)
+);
+
+CREATE TABLE IF NOT EXISTS deck_versions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    deck TEXT NOT NULL,
+    created_at_utc TEXT NOT NULL,
+    decklist TEXT NOT NULL,
+    note TEXT
 );
 
 CREATE TABLE IF NOT EXISTS match_events (
@@ -71,6 +80,8 @@ def connect(db_path: Path | None = None) -> Iterator[sqlite3.Connection]:
             conn.execute("ALTER TABLE matches ADD COLUMN game_start_seconds REAL")
         if "lesson" not in columns:
             conn.execute("ALTER TABLE matches ADD COLUMN lesson TEXT")
+        if "deck_version_id" not in columns:
+            conn.execute("ALTER TABLE matches ADD COLUMN deck_version_id INTEGER")
         yield conn
         conn.commit()
     finally:
@@ -90,6 +101,8 @@ class Match:
     # Where in the recording the game itself begins (after menus/matchmaking).
     game_start_seconds: float | None = None
     lesson: str | None = None  # the one thing to take away from this game
+    # The saved list of this deck that was current when the match was logged.
+    deck_version_id: int | None = None
 
 
 def log_match(
@@ -101,10 +114,14 @@ def log_match(
     db_path: Path | None = None,
 ) -> int:
     with connect(db_path) as conn:
+        version = conn.execute(
+            "SELECT id FROM deck_versions WHERE deck = ? ORDER BY id DESC LIMIT 1", (deck,)
+        ).fetchone()
         cur = conn.execute(
             """
-            INSERT INTO matches (played_at_utc, deck, opponent_deck, result, notes, video_file)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO matches
+                (played_at_utc, deck, opponent_deck, result, notes, video_file, deck_version_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 datetime.now(timezone.utc).isoformat(),
@@ -113,9 +130,42 @@ def log_match(
                 result,
                 notes,
                 video_file,
+                version["id"] if version else None,
             ),
         )
         return cur.lastrowid
+
+
+@dataclass(frozen=True)
+class DeckVersion:
+    id: int
+    deck: str
+    created_at_utc: str
+    decklist: str
+    note: str | None
+
+
+def add_deck_version(
+    deck: str, decklist: str, note: str | None = None, db_path: Path | None = None
+) -> int:
+    """Save a new version of a deck's list; matches logged from now on
+    count towards it."""
+    with connect(db_path) as conn:
+        cur = conn.execute(
+            """
+            INSERT INTO deck_versions (deck, created_at_utc, decklist, note)
+            VALUES (?, ?, ?, ?)
+            """,
+            (deck, datetime.now(timezone.utc).isoformat(), decklist, note or None),
+        )
+        return cur.lastrowid
+
+
+def list_deck_versions(db_path: Path | None = None) -> list[DeckVersion]:
+    """All saved lists, oldest first."""
+    with connect(db_path) as conn:
+        rows = conn.execute("SELECT * FROM deck_versions ORDER BY id").fetchall()
+        return [DeckVersion(**dict(row)) for row in rows]
 
 
 def get_match(match_id: int, db_path: Path | None = None) -> Match | None:

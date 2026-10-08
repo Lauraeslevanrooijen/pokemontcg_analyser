@@ -24,10 +24,18 @@ Early scaffold. Working today:
   stored in `recordings/voice/`. Mark where the game itself starts and trim
   the menus before it off the recording (the untrimmed file is kept in
   `recordings/originals/` for 14 days, then deleted).
+- Recording can include a microphone, for talking through your plays; the
+  match list shows each recording's size, can be searched and filtered, and
+  a recording can be deleted while its notes are kept.
+- A one-line lesson per match ("what do I take from this game"), shown on
+  the start page before the next game.
 - Stats and Moments pages in the web app: win rates per deck, per matchup
   and by going first or second, misplays per reviewed game and per turn, and
   every labelled moment across all matches with a link to that point in the
   video.
+- Decks page: save a decklist per deck with versions; matches count towards
+  the version that was current when they were logged, so a change to the
+  list shows up as a change in results.
 - `app` / `install-app` — run the same thing as a desktop app in its own
   window instead of a browser tab, and install a double-clickable launcher
   in `~/Applications`.
@@ -91,6 +99,7 @@ src/pokemontcg_analyser/
   analysis.py   frame extraction
   webapp.py     local review app (FastAPI + Jinja2 templates)
   insights.py   cross-match stats and labelled moments
+  decks.py      decklist parsing and version diffs
   desktop.py    desktop-app window + macOS .app launcher
   templates/    review app HTML
   cli.py        command-line entry point

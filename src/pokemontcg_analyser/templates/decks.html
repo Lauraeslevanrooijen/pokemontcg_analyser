@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+{% block title %}Decks — Pokémon TCG Live analyser{% endblock %}
+{% macro record(r) %}{% if r.total %}{{ r.wins }}&ndash;{{ r.losses }}&ndash;{{ r.ties }} <span class="muted">({{ '%.0f%%' % (r.win_rate * 100) }})</span>{% else %}<span class="muted">no games yet</span>{% endif %}{% endmacro %}
+{% macro version_form(name, decklist) %}
+  <form method="post" action="/decks" style="display: grid; gap: 8px; margin-top: 8px;">
+    {% if name %}
+      <input type="hidden" name="deck" value="{{ name }}">
+    {% else %}
+      <input name="deck" placeholder="Deck name, as you log it for matches" required>
+    {% endif %}
+    <textarea name="decklist" rows="12" required style="font-family: ui-monospace, monospace; font-size: 0.85em;"
+              placeholder="Paste the list exported from Pokémon TCG Live">{{ decklist }}</textarea>
+    <input name="note" placeholder="What changed, and why? (optional)">
+    <div><button type="submit">Save as new version</button></div>
+  </form>
+{% endmacro %}
+{% block content %}
+  <h1>Decks</h1>
+  <p class="muted">
+    Save your list whenever you change it. Matches you log afterwards count towards that version, so you can see
+    whether a change helped.
+  </p>
+
+  {% for d in decks %}
+    <div class="panel" style="margin-bottom: 24px;">
+      <h2 style="margin: 0 0 4px;">{{ d.name }}</h2>
+      <p style="margin: 0 0 12px;">{{ record(d.overall) }}</p>
+
+      {% if d.versions %}
+        <table>
+          <thead><tr><th>Version</th><th>Saved</th><th>Record</th><th>Changes</th></tr></thead>
+          <tbody>
+            {% for row in d.versions %}
+              <tr>
+                <td style="white-space: nowrap;">
+                  v{{ row.number }}{% if loop.first %} <span class="chip label-good">current</span>{% endif %}
+                  <div class="muted" style="font-size: 0.85em; {{ 'color: var(--loss);' if row.cards != 60 else '' }}">{{ row.cards }} cards</div>
+                </td>
+                <td style="white-space: nowrap;">{{ row.version.created_at_utc[:10] }}</td>
+                <td style="white-space: nowrap;">{{ record(row.record) }}</td>
+                <td>
+                  {% if row.version.note %}<div>{{ row.version.note }}</div>{% endif %}
+                  {% for change, card in row.changes %}
+                    <div class="muted" style="font-size: 0.85em;">
+                      <span style="color: var(--{{ 'win' if change > 0 else 'loss' }});">{{ '%+d' % change }}</span> {{ card }}
+                    </div>
+                  {% endfor %}
+                  {% if row.number == 1 and not row.version.note %}<span class="muted">First saved list</span>{% endif %}
+                </td>
+              </tr>
+            {% endfor %}
+            {% if d.unversioned.total %}
+              <tr>
+                <td class="muted" colspan="2">Before any saved list</td>
+                <td style="white-space: nowrap;">{{ record(d.unversioned) }}</td>
+                <td></td>
+              </tr>
+            {% endif %}
+          </tbody>
+        </table>
+      {% endif %}
+
+      <details>
+        <summary style="cursor: pointer;">{{ 'Change the list' if d.current else 'Save a list for this deck' }}</summary>
+        {{ version_form(d.name, d.current.decklist if d.current else '') }}
+      </details>
+    </div>
+  {% endfor %}
+
+  <div class="panel">
+    <strong>Add a deck</strong>
+    {{ version_form('', '') }}
+  </div>
+{% endblock %}

@@ -20,7 +20,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 
-from . import insights, recorder, storage
+from . import decks, insights, recorder, storage
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
 RECORDINGS_DIR = Path("recordings")
@@ -167,6 +167,62 @@ def stats(request: Request):
         "stats.html",
         {"stats": insights.build(matches, events), "labels": storage.LABELS},
     )
+
+
+@app.get("/decks")
+def decks_page(request: Request):
+    matches = storage.list_matches(db_path=db_path())
+    versions = storage.list_deck_versions(db_path=db_path())
+    names = sorted({m.deck for m in matches} | {v.deck for v in versions}, key=str.lower)
+    deck_views = []
+    for name in names:
+        deck_matches = [m for m in matches if m.deck == name]
+        rows = []
+        previous = None
+        for number, version in enumerate((v for v in versions if v.deck == name), start=1):
+            record = insights.Record()
+            for m in deck_matches:
+                if m.deck_version_id == version.id:
+                    record.add(m.result)
+            rows.append(
+                {
+                    "number": number,
+                    "version": version,
+                    "record": record,
+                    "cards": decks.card_count(version.decklist),
+                    "changes": decks.diff(previous.decklist, version.decklist) if previous else [],
+                }
+            )
+            previous = version
+        unversioned = insights.Record()
+        overall = insights.Record()
+        for m in deck_matches:
+            overall.add(m.result)
+            if m.deck_version_id is None:
+                unversioned.add(m.result)
+        deck_views.append(
+            {
+                "name": name,
+                "overall": overall,
+                "unversioned": unversioned,
+                "versions": list(reversed(rows)),  # newest first
+                "current": previous,
+            }
+        )
+    return templates.TemplateResponse(request, "decks.html", {"decks": deck_views})
+
+
+@app.post("/decks")
+def save_deck_version(
+    deck: str = Form(...),
+    decklist: str = Form(...),
+    note: str = Form(""),
+):
+    deck, decklist = deck.strip(), decklist.strip()
+    if not deck or not decklist:
+        raise HTTPException(status_code=400, detail="A deck needs a name and a list")
+    storage.add_deck_version(deck, decklist, note.strip() or None, db_path=db_path())
+    return RedirectResponse("/decks", status_code=303)
 
 
 @app.get("/moments")
