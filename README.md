@@ -53,6 +53,13 @@ and automatic win/loss detection.
 
 Requires Python 3.11+ and `ffmpeg` (`brew install ffmpeg`).
 
+Recording the main display uses a small ScreenCaptureKit recorder
+(`src/pokemontcg_analyser/capture/main.swift`), compiled on first start if
+the Swift compiler is present (`xcode-select --install`). ffmpeg's screen
+input only gets about 12 frames a second from macOS while a fullscreen game
+is in front; this recorder does not have that limit. Without it, or for
+another display, recording falls back to ffmpeg.
+
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate

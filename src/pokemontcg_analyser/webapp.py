@@ -89,6 +89,9 @@ def queue_transcription(event_id: int) -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     recorder.purge_originals(RECORDINGS_DIR, ORIGINALS_RETENTION_DAYS)
+    # Compiling the recorder takes ~20s the first time; do it now, out of
+    # the way, so it is ready when a recording is started.
+    threading.Thread(target=recorder.build_capture_helper, daemon=True).start()
     yield
     # Don't leave an unfinalized (unplayable) MP4 behind if the server is
     # stopped mid-recording.
@@ -309,18 +312,24 @@ def start_recording(
     if not screens:
         raise HTTPException(status_code=400, detail="No screen to record found")
     device = next((d for d in screens if d.name == screen), screens[0])
-    audio_index = None
+    audio_index = audio_name = None
     if voice:
         chosen = next((d for d in microphones if d.name == microphone), None)
         if chosen is None:
             raise HTTPException(status_code=400, detail="That microphone is not connected")
-        audio_index = chosen.index
+        audio_index, audio_name = chosen.index, chosen.name
     # The window position is relative to the main display, so only crop
     # to the game when that is the screen being recorded.
-    crop = recorder.game_crop() if device.name == "Capture screen 0" else None
+    main_display = device.name == "Capture screen 0"
+    crop = recorder.game_crop() if main_display else None
     try:
         _recording = recorder.start_recording(
-            device.index, RECORDINGS_DIR, audio_index=audio_index, crop=crop
+            device.index,
+            RECORDINGS_DIR,
+            audio_index=audio_index,
+            crop=crop,
+            audio_name=audio_name,
+            main_display=main_display,
         )
     except (RuntimeError, OSError) as exc:
         raise HTTPException(status_code=500, detail=str(exc))

@@ -8,6 +8,7 @@ timestamps with real time.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
@@ -359,6 +360,48 @@ class Recording:
         return self.video_path
 
 
+CAPTURE_SOURCE = Path(__file__).parent / "capture" / "main.swift"
+CAPTURE_CACHE_DIR = Path.home() / "Library" / "Caches" / "pokemontcg-analyser"
+
+
+def capture_helper_path() -> Path:
+    """Where the compiled ScreenCaptureKit recorder lives. The name carries
+    a hash of its source, so editing the source means a fresh build."""
+    digest = hashlib.sha1(CAPTURE_SOURCE.read_bytes()).hexdigest()[:12]
+    return CAPTURE_CACHE_DIR / f"ptcg-capture-{digest}"
+
+
+def build_capture_helper() -> Path | None:
+    """Compile the recorder if that hasn't been done yet (about 20s, once).
+    Returns None when there is no Swift compiler or the build fails; callers
+    then record with ffmpeg instead."""
+    helper = capture_helper_path()
+    if helper.exists():
+        return helper
+    swiftc = shutil.which("swiftc")
+    if swiftc is None:
+        return None
+    CAPTURE_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    building = helper.with_suffix(f".building{os.getpid()}")
+    result = subprocess.run(
+        [swiftc, "-O", "-swift-version", "5", "-o", str(building), str(CAPTURE_SOURCE)],
+        capture_output=True,
+    )
+    if result.returncode != 0 or not building.exists():
+        building.unlink(missing_ok=True)
+        return None
+    building.replace(helper)
+    for old in CAPTURE_CACHE_DIR.glob("ptcg-capture-*"):
+        if old != helper:
+            old.unlink(missing_ok=True)
+    return helper
+
+
+def _launch(cmd: list[str], log_path: Path, mode: str) -> subprocess.Popen:
+    with log_path.open(mode) as log:
+        return subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=log, stderr=subprocess.STDOUT)
+
+
 def start_recording(
     device_index: int,
     out_dir: Path,
@@ -367,29 +410,56 @@ def start_recording(
     max_width: int = 1920,
     audio_index: int | None = None,
     crop: Crop | None = None,
+    audio_name: str | None = None,
+    main_display: bool = False,
 ) -> Recording:
     """Start recording in the background; call `.stop()` on the result.
 
-    ffmpeg's output goes to a .log file next to the video. Raises
-    RuntimeError if ffmpeg exits straight away (wrong device, or no Screen
-    Recording permission for the app that launched this process).
+    The main display is recorded with the ScreenCaptureKit helper when it
+    has been built: ffmpeg only gets ~12 frames a second from macOS while a
+    fullscreen game is in front. Anything else, or a helper that won't
+    start, falls back to ffmpeg. The recorder's output goes to a .log file
+    next to the video. Raises RuntimeError if recording can't start (wrong
+    device, or no Screen Recording permission for the app that launched
+    this process).
     """
-    ffmpeg = require_ffmpeg()
     out_dir.mkdir(parents=True, exist_ok=True)
     video_path = default_output_path(out_dir)
     log_path = video_path.with_suffix(".log")
     started_at = datetime.now(timezone.utc)
     _write_sidecar(video_path, device_index, framerate, started_at)
 
+    helper = capture_helper_path() if main_display else None
+    if helper is not None and helper.exists():
+        cmd = [str(helper), "--output", str(video_path), "--max-width", str(max_width), "--fps", str(framerate)]
+        if crop is not None:
+            cmd += ["--crop", ",".join(f"{value:.5f}" for value in crop)]
+        if audio_name is not None:
+            cmd += ["--microphone", audio_name]
+        if not capture_cursor:
+            cmd.append("--no-cursor")
+        recording = Recording(video_path, log_path, started_at, _launch(cmd, log_path, "wb"))
+        # It reports "recording WxH" once frames are flowing.
+        deadline = time.monotonic() + 6
+        while time.monotonic() < deadline and recording.is_running:
+            if "recording " in recording.log_tail():
+                # Marks are measured from here, so count from the first frame.
+                recording.started_at = datetime.now(timezone.utc)
+                return recording
+            time.sleep(0.1)
+        if recording.is_running:
+            recording.process.kill()
+            recording.process.wait()
+        video_path.unlink(missing_ok=True)
+        with log_path.open("ab") as log:
+            log.write(b"\n-- the ScreenCaptureKit recorder did not start; using ffmpeg --\n")
+
+    ffmpeg = require_ffmpeg()
     cmd = build_ffmpeg_command(
         ffmpeg, device_index, video_path, framerate, capture_cursor, max_width, audio_index, crop
     )
     cmd[1:1] = ["-hide_banner", "-nostats"]
-    with log_path.open("wb") as log:
-        process = subprocess.Popen(
-            cmd, stdin=subprocess.PIPE, stdout=log, stderr=subprocess.STDOUT
-        )
-    recording = Recording(video_path, log_path, started_at, process)
+    recording = Recording(video_path, log_path, started_at, _launch(cmd, log_path, "ab"))
 
     deadline = time.monotonic() + 1.5
     while time.monotonic() < deadline:

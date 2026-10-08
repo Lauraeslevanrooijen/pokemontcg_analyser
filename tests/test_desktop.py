@@ -4,7 +4,10 @@ from pathlib import Path
 from pokemontcg_analyser import desktop
 
 
-def test_install_app_writes_a_launcher_bundle(tmp_path: Path) -> None:
+def test_install_app_writes_a_launcher_bundle(tmp_path: Path, monkeypatch) -> None:
+    from pokemontcg_analyser import recorder
+
+    monkeypatch.setattr(recorder, "build_capture_helper", lambda: None)  # no compiling in tests
     data_dir = tmp_path / "my data"
     data_dir.mkdir()
 

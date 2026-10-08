@@ -151,3 +151,38 @@ def test_build_ffmpeg_command_crops_before_scaling(tmp_path) -> None:
     assert cmd[cmd.index("-vf") + 1].startswith(
         "crop=iw*1.00000:ih*0.86900:iw*0.00000:ih*0.08080,format=nv12,hwupload"
     )
+
+
+def test_capture_helper_name_follows_its_source(tmp_path, monkeypatch) -> None:
+    source = tmp_path / "main.swift"
+    source.write_text("// one")
+    monkeypatch.setattr(recorder, "CAPTURE_SOURCE", source)
+    first = recorder.capture_helper_path()
+    source.write_text("// two")
+
+    assert recorder.capture_helper_path() != first
+    assert first.name.startswith("ptcg-capture-")
+
+
+def test_build_capture_helper_without_a_compiler(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(recorder, "CAPTURE_CACHE_DIR", tmp_path)
+    with patch("pokemontcg_analyser.recorder.shutil.which", return_value=None):
+        assert recorder.build_capture_helper() is None
+
+
+def test_start_recording_uses_the_helper_for_the_main_display(tmp_path, monkeypatch) -> None:
+    helper = tmp_path / "ptcg-capture-test"
+    # stands in for the real recorder: announce, then wait to be stopped
+    helper.write_text("#!/bin/sh\necho \"recording 1920x1080 at 30 fps\"\necho \"$@\"\nread line\nexit 0\n")
+    helper.chmod(0o755)
+    monkeypatch.setattr(recorder, "capture_helper_path", lambda: helper)
+
+    recording = recorder.start_recording(
+        3, tmp_path / "out", crop=(0.0, 0.1, 1.0, 0.8), audio_name="Desk Mic", main_display=True
+    )
+    recording.stop()
+
+    log = recording.log_path.read_text()
+    assert "--crop 0.00000,0.10000,1.00000,0.80000" in log
+    assert "--microphone Desk Mic" in log
+    assert recording.process.returncode == 0

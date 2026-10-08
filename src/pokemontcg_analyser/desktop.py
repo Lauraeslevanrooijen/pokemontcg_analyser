@@ -149,6 +149,9 @@ def install_app(data_dir: Path, port: int = 8000, apps_dir: Path | None = None) 
     keeps working as the code changes but breaks if the project or its
     virtualenv is moved (re-run the install then).
     """
+    from . import recorder
+
+    recorder.build_capture_helper()
     apps_dir = apps_dir if apps_dir is not None else Path.home() / "Applications"
     bundle = apps_dir / f"{APP_NAME}.app"
     if bundle.exists():
