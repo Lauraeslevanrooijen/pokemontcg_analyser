@@ -231,6 +231,15 @@ final class Recorder: NSObject, SCStreamOutput, SCStreamDelegate {
                 if self.writer.status != .completed {
                     fail("could not finish the file: \(self.writer.error?.localizedDescription ?? "unknown")")
                 }
+                // Moving the index to the front goes through a temporary copy
+                // ("<name>.sb-…") that is still there when the process exits
+                // straight away, doubling the space every recording takes.
+                let url = URL(fileURLWithPath: self.options.output)
+                let folder = url.deletingLastPathComponent()
+                for name in (try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? []
+                where name.hasPrefix(url.lastPathComponent + ".sb-") {
+                    try? FileManager.default.removeItem(at: folder.appendingPathComponent(name))
+                }
                 // How many pictures the system delivered against how many
                 // were written says whether capture itself kept up.
                 log("done: delivered=\(self.delivered) written=\(self.written) seconds=\(String(format: "%.1f", Double(self.lastTick + 1) / Double(self.options.fps)))")
