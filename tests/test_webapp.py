@@ -450,6 +450,8 @@ def test_decks_page_shows_versions_with_their_records(client: TestClient) -> Non
     assert "max Iono" in page
     assert "+1</span> Iono PAL 185" in page
     assert "8 cards" in page
+    assert "<span>Dragapult ex</span>" in page
+    assert "TWM 130" in page
     assert client.post("/decks", data={"deck": " ", "decklist": "x"}).status_code == 400
 
 

@@ -57,3 +57,28 @@ def test_matches_count_towards_the_version_current_when_logged(tmp_path: Path) -
 
 def test_card_names_drops_set_code_and_number() -> None:
     assert decks.card_names(V1) == ["Dragapult ex", "Fezandipiti ex", "Ultra Ball", "Iono"]
+
+
+def test_sections_group_cards_as_the_game_exports_them() -> None:
+    exported = V1 + """
+Energy: 2
+2 Basic {L} Energy MEE 12
+6 Basic {G} Energy MEE 9
+
+Total Cards: 21
+"""
+
+    pokemon, trainer, energy = decks.sections(exported)
+
+    assert (pokemon.title, pokemon.total) == ("Pokémon", 6)
+    assert pokemon.cards[0] == decks.ListedCard(4, "Dragapult ex", "TWM 130")
+    assert (trainer.title, trainer.total) == ("Trainer", 7)
+    assert [c.name for c in energy.cards] == ["Basic Lightning Energy", "Basic Grass Energy"]
+    assert energy.total == 8
+
+
+def test_sections_without_headers_still_lists_the_cards() -> None:
+    (only,) = decks.sections("4 Dragapult ex TWM 130\n3 Iono")
+
+    assert only.title == ""
+    assert only.cards == [decks.ListedCard(4, "Dragapult ex", "TWM 130"), decks.ListedCard(3, "Iono", "")]

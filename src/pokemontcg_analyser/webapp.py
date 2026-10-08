@@ -241,6 +241,7 @@ def decks_page(request: Request):
                     "version": version,
                     "record": record,
                     "cards": decks.card_count(version.decklist),
+                    "sections": decks.sections(version.decklist),
                     "changes": decks.diff(previous.decklist, version.decklist) if previous else [],
                 }
             )

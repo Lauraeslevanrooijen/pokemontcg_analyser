@@ -1,6 +1,22 @@
 {% extends "base.html" %}
 {% block title %}Decks — Pokémon TCG Live analyser{% endblock %}
 {% macro record(r) %}{% if r.total %}{{ r.wins }}&ndash;{{ r.losses }}&ndash;{{ r.ties }} <span class="muted">({{ '%.0f%%' % (r.win_rate * 100) }})</span>{% else %}<span class="muted">no games yet</span>{% endif %}{% endmacro %}
+{% macro card_list(sections) %}
+  <div class="decklist">
+    {% for section in sections %}
+      <div>
+        <div class="decklist-title">{{ section.title or 'Cards' }} <span class="muted">{{ section.total }}</span></div>
+        {% for card in section.cards %}
+          <div class="decklist-card">
+            <span class="num">{{ card.count }}</span>
+            <span>{{ card.name }}</span>
+            <span class="muted printing">{{ card.printing }}</span>
+          </div>
+        {% endfor %}
+      </div>
+    {% endfor %}
+  </div>
+{% endmacro %}
 {% macro version_form(name, decklist) %}
   <form method="post" action="/decks" style="display: grid; gap: 8px; margin-top: 8px;">
     {% if name %}
@@ -15,6 +31,13 @@
   </form>
 {% endmacro %}
 {% block content %}
+  <style>
+    .decklist { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 8px 32px; margin: 8px 0 16px; }
+    .decklist-title { font-weight: 600; padding-bottom: 4px; margin-bottom: 4px; border-bottom: 1px solid var(--border); }
+    .decklist-card { display: grid; grid-template-columns: 1.5em minmax(0, 1fr) auto; gap: 8px; padding: 2px 0; font-size: 0.95em; }
+    .decklist-card .printing { font-size: 0.8em; align-self: center; white-space: nowrap; }
+    details > summary { cursor: pointer; }
+  </style>
   <h1>Decks</h1>
   <p class="muted">
     Save your list whenever you change it. Matches you log afterwards count towards that version, so you can see
@@ -27,6 +50,7 @@
       <p style="margin: 0 0 12px;">{{ record(d.overall) }}</p>
 
       {% if d.versions %}
+        {{ card_list(d.versions[0].sections) }}
         <table>
           <thead><tr><th>Version</th><th>Saved</th><th>Record</th><th>Changes</th></tr></thead>
           <tbody>
@@ -46,6 +70,12 @@
                     </div>
                   {% endfor %}
                   {% if row.number == 1 and not row.version.note %}<span class="muted">First saved list</span>{% endif %}
+                  {% if not loop.first %}
+                    <details>
+                      <summary class="muted" style="font-size: 0.85em;">Show this list</summary>
+                      {{ card_list(row.sections) }}
+                    </details>
+                  {% endif %}
                 </td>
               </tr>
             {% endfor %}
@@ -61,7 +91,7 @@
       {% endif %}
 
       <details>
-        <summary style="cursor: pointer;">{{ 'Change the list' if d.current else 'Save a list for this deck' }}</summary>
+        <summary>{{ 'Change the list' if d.current else 'Save a list for this deck' }}</summary>
         {{ version_form(d.name, d.current.decklist if d.current else '') }}
       </details>
     </div>
