@@ -118,9 +118,39 @@
         </table>
       {% endif %}
 
-      <details>
+      {% if d.logged_games %}
+        <details {{ 'open' if d.missing else '' }}>
+          <summary>What you play, from {{ d.logged_games }} {{ 'game' if d.logged_games == 1 else 'games' }} with a battle log</summary>
+          {% if d.missing %}
+            <p style="margin: 8px 0;">
+              <strong>Not in this list, but in your deck according to the logs:</strong> {{ d.missing|join(', ') }}.
+              The saved list is out of date &mdash; best is to export it again from the game.
+              <a href="/decks?add={{ d.name|urlencode }}" style="color: var(--accent);">Or open the list with these added</a>
+              (one copy each, without set codes; check the counts before saving).
+            </p>
+          {% endif %}
+          <table style="font-size: 0.95em;">
+            <thead><tr><th>Card</th><th class="num">Played in</th><th class="num">Times per game played</th><th></th></tr></thead>
+            <tbody>
+              {% for card, (games, times) in d.usage %}
+                <tr>
+                  <td>{{ card }}</td>
+                  <td class="num">{{ games }} of {{ d.logged_games }}</td>
+                  <td class="num">{{ '%.1f' % (times / games) }}</td>
+                  <td style="width: 30%;"><span class="bar" style="width: {{ '%.0f' % (games / d.logged_games * 100) }}%; background: var(--muted);"></span></td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+          {% if d.never_played %}
+            <p class="muted" style="margin: 8px 0;">In the list but never played in these games: {{ d.never_played|join(', ') }}.</p>
+          {% endif %}
+        </details>
+      {% endif %}
+
+      <details {{ 'open' if add == d.name else '' }} id="change-{{ loop.index }}">
         <summary>{{ 'Change the list' if d.current else 'Save a list for this deck' }}</summary>
-        {{ version_form(d.name, d.current.decklist if d.current else '') }}
+        {{ version_form(d.name, (d.with_missing if add == d.name and d.with_missing else d.current.decklist) if d.current else '') }}
       </details>
     </div>
   {% endfor %}

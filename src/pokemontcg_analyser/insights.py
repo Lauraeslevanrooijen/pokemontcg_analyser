@@ -178,3 +178,38 @@ def openings(hands: list[tuple[str, list[str], dict[str, str]]]) -> Openings:
         sorted(found.by_card.items(), key=lambda item: (-item[1].total, item[0]))
     )
     return found
+
+
+def turn_lengths(match: Match, events: list[Event]) -> list[tuple[int, str | None, float]]:
+    """Each turn of a match as (number, whose, seconds), from its turn
+    markers. The last turn is left out: nothing marks where it ends."""
+    marks = sorted(
+        (e for e in events if e.kind == "turn" and e.video_offset_seconds is not None),
+        key=lambda e: e.video_offset_seconds,
+    )
+    lengths = []
+    for number, (mark, following) in enumerate(zip(marks, marks[1:]), start=1):
+        owner = mark.detail
+        if owner is None and match.turn_order:
+            # hand-placed markers: turns alternate from whoever went first
+            mine_are_odd = match.turn_order == "first"
+            owner = "you" if (number % 2 == 1) == mine_are_odd else "opponent"
+        lengths.append((number, owner, following.video_offset_seconds - mark.video_offset_seconds))
+    return lengths
+
+
+def tempo(matches: list[Match], events: list[Event]) -> dict[str, tuple[float, int]]:
+    """Average turn length per side over all matches: side -> (seconds, turns)."""
+    by_match: dict[int, list[Event]] = defaultdict(list)
+    for event in events:
+        by_match[event.match_id].append(event)
+    totals: dict[str, list[float]] = {"you": [], "opponent": []}
+    for match in matches:
+        for _, owner, seconds in turn_lengths(match, by_match.get(match.id, [])):
+            if owner in totals:
+                totals[owner].append(seconds)
+    return {
+        owner: (sum(values) / len(values), len(values))
+        for owner, values in totals.items()
+        if values
+    }

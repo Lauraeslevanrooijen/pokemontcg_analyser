@@ -48,6 +48,15 @@ Early scaffold. Working today:
   and a chart of Prize cards taken per turn, the opponent's deck gets a
   name when you gave none, and the Stats page compares opening hands across
   games.
+- Matches can be corrected or deleted from their review page, and each
+  opponent deck can carry a note that shows on every match against it.
+- The Decks page shows what you actually play, from the battle logs: how
+  often each card is used, which listed cards never are, and which cards
+  the logs show that the saved list lacks. The Stats page shows turn tempo.
+- The database and spoken notes are copied once a day to iCloud Drive
+  (`Pokemon TCG Analyser backups`, or Documents without iCloud; set
+  `POKEMONTCG_BACKUP_DIR` for another place), keeping 14 days. Recordings
+  are not backed up, and can be set to be deleted after a number of weeks.
 - Decks page: save a decklist per deck with versions; matches count towards
   the version that was current when they were logged, so a change to the
   list shows up as a change in results.

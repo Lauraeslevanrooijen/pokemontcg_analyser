@@ -36,7 +36,18 @@ CREATE TABLE IF NOT EXISTS matches (
     game_start_seconds REAL,
     lesson TEXT,
     deck_version_id INTEGER REFERENCES deck_versions(id),
-    battle_log TEXT
+    battle_log TEXT,
+    opponent_auto INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS settings (
+    key TEXT PRIMARY KEY,
+    value TEXT
+);
+
+CREATE TABLE IF NOT EXISTS matchup_notes (
+    opponent_deck TEXT PRIMARY KEY,
+    note TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS deck_versions (
@@ -90,6 +101,8 @@ def connect(db_path: Path | None = None) -> Iterator[sqlite3.Connection]:
             conn.execute("ALTER TABLE matches ADD COLUMN deck_version_id INTEGER")
         if "battle_log" not in columns:
             conn.execute("ALTER TABLE matches ADD COLUMN battle_log TEXT")
+        if "opponent_auto" not in columns:
+            conn.execute("ALTER TABLE matches ADD COLUMN opponent_auto INTEGER NOT NULL DEFAULT 0")
         yield conn
         conn.commit()
     finally:
@@ -112,6 +125,9 @@ class Match:
     # The saved list of this deck that was current when the match was logged.
     deck_version_id: int | None = None
     battle_log: str | None = None  # as copied from the game after the match
+    # 1 when the opponent's deck was named from the battle log rather than
+    # typed in: such a name is a guess, and is not copied to later matches.
+    opponent_auto: int = 0
 
 
 def log_match(
@@ -199,9 +215,101 @@ def set_battle_log(match_id: int, text: str | None, db_path: Path | None = None)
         conn.execute("UPDATE matches SET battle_log = ? WHERE id = ?", (text or None, match_id))
 
 
-def set_opponent_deck(match_id: int, name: str | None, db_path: Path | None = None) -> None:
+def set_opponent_deck(
+    match_id: int, name: str | None, auto: bool = False, db_path: Path | None = None
+) -> None:
     with connect(db_path) as conn:
-        conn.execute("UPDATE matches SET opponent_deck = ? WHERE id = ?", (name or None, match_id))
+        conn.execute(
+            "UPDATE matches SET opponent_deck = ?, opponent_auto = ? WHERE id = ?",
+            (name or None, int(auto), match_id),
+        )
+
+
+def update_match(
+    match_id: int,
+    deck: str,
+    opponent_deck: str | None,
+    result: Result,
+    db_path: Path | None = None,
+) -> None:
+    """Correct what a match was logged as. A different deck name moves the
+    match to that deck's newest saved list."""
+    with connect(db_path) as conn:
+        current = conn.execute(
+            "SELECT deck, opponent_deck FROM matches WHERE id = ?", (match_id,)
+        ).fetchone()
+        if current is None:
+            return
+        conn.execute(
+            "UPDATE matches SET deck = ?, opponent_deck = ?, result = ? WHERE id = ?",
+            (deck, opponent_deck or None, result, match_id),
+        )
+        if (opponent_deck or None) != current["opponent_deck"]:
+            conn.execute("UPDATE matches SET opponent_auto = 0 WHERE id = ?", (match_id,))
+        if deck != current["deck"]:
+            version = conn.execute(
+                "SELECT id FROM deck_versions WHERE deck = ? ORDER BY id DESC LIMIT 1", (deck,)
+            ).fetchone()
+            conn.execute(
+                "UPDATE matches SET deck_version_id = ? WHERE id = ?",
+                (version["id"] if version else None, match_id),
+            )
+
+
+def delete_match(match_id: int, db_path: Path | None = None) -> None:
+    """Remove a match and everything on its timeline."""
+    with connect(db_path) as conn:
+        conn.execute("DELETE FROM match_events WHERE match_id = ?", (match_id,))
+        conn.execute("DELETE FROM matches WHERE id = ?", (match_id,))
+
+
+def get_setting(key: str, default: str | None = None, db_path: Path | None = None) -> str | None:
+    with connect(db_path) as conn:
+        row = conn.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
+        return row["value"] if row is not None else default
+
+
+def set_setting(key: str, value: str | None, db_path: Path | None = None) -> None:
+    with connect(db_path) as conn:
+        conn.execute(
+            "INSERT INTO settings (key, value) VALUES (?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            (key, value),
+        )
+
+
+def matchup_notes(db_path: Path | None = None) -> dict[str, str]:
+    """What to remember against each opponent deck, by its name."""
+    with connect(db_path) as conn:
+        rows = conn.execute("SELECT * FROM matchup_notes ORDER BY opponent_deck").fetchall()
+        return {row["opponent_deck"]: row["note"] for row in rows}
+
+
+def set_matchup_note(opponent_deck: str, note: str, db_path: Path | None = None) -> None:
+    with connect(db_path) as conn:
+        if note:
+            conn.execute(
+                "INSERT INTO matchup_notes (opponent_deck, note) VALUES (?, ?) "
+                "ON CONFLICT(opponent_deck) DO UPDATE SET note = excluded.note",
+                (opponent_deck, note),
+            )
+        else:
+            conn.execute("DELETE FROM matchup_notes WHERE opponent_deck = ?", (opponent_deck,))
+
+
+def backup_database(destination: Path, db_path: Path | None = None) -> None:
+    """Write a consistent copy of the database, safe while it is in use."""
+    source_path = db_path if db_path is not None else DEFAULT_DB_PATH
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    source = sqlite3.connect(source_path)
+    try:
+        target = sqlite3.connect(destination)
+        try:
+            source.backup(target)
+        finally:
+            target.close()
+    finally:
+        source.close()
 
 
 def set_result(match_id: int, result: Result, db_path: Path | None = None) -> None:

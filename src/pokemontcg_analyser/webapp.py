@@ -9,12 +9,16 @@ data/matches.db or source over HTTP.
 
 from __future__ import annotations
 
+import os
 import queue
+import shutil
+import sqlite3
 import subprocess
 import threading
 import traceback
 import uuid
 from contextlib import asynccontextmanager
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
@@ -140,6 +144,79 @@ def unlogged_recordings(matches: list[storage.Match]) -> list[str]:
     return sorted(names, reverse=True)
 
 
+def _remove_recording(name: str) -> None:
+    """Delete a recording and the files that belong to it."""
+    video_path = RECORDINGS_DIR / name
+    for path in (
+        video_path,
+        video_path.with_suffix(".json"),
+        video_path.with_suffix(".log"),
+        RECORDINGS_DIR / recorder.ORIGINALS_DIRNAME / name,
+    ):
+        path.unlink(missing_ok=True)
+
+
+def recording_retention_weeks() -> int | None:
+    value = storage.get_setting("recording_retention_weeks", db_path=db_path())
+    return int(value) if value and value.isdigit() else None
+
+
+def purge_old_recordings() -> int:
+    """Delete the recordings of matches older than the chosen number of
+    weeks; their logs and notes stay. Off until a number is chosen."""
+    weeks = recording_retention_weeks()
+    if weeks is None:
+        return 0
+    cutoff = (datetime.now(timezone.utc) - timedelta(weeks=weeks)).isoformat()
+    active = active_recording()
+    removed = 0
+    for match in storage.list_matches(db_path=db_path()):
+        if not match.video_file or match.played_at_utc >= cutoff:
+            continue
+        name = Path(match.video_file).name
+        if active is not None and active.video_path.name == name:
+            continue
+        _remove_recording(name)
+        storage.clear_video(match.id, db_path=db_path())
+        removed += 1
+    return removed
+
+
+# Where copies of the database and the spoken notes go. iCloud Drive when
+# it is there, so a copy also exists off this laptop; otherwise Documents.
+# POKEMONTCG_BACKUP_DIR picks another place.
+_ICLOUD = Path.home() / "Library" / "Mobile Documents" / "com~apple~CloudDocs"
+BACKUP_DIR = Path(
+    os.environ.get("POKEMONTCG_BACKUP_DIR")
+    or (_ICLOUD if _ICLOUD.is_dir() else Path.home() / "Documents") / "Pokemon TCG Analyser backups"
+)
+BACKUPS_KEPT = 14
+
+
+def run_backup() -> Path | None:
+    """Once a day: a dated copy of the database, and any spoken notes not
+    copied yet. Recordings are too big to copy and are not included.
+    Returns today's copy, or None if it could not be made."""
+    today = BACKUP_DIR / f"matches-{datetime.now().strftime('%Y-%m-%d')}.db"
+    try:
+        if not today.exists():
+            if not db_path().exists():
+                return None
+            storage.backup_database(today, db_path=db_path())
+            for old in sorted(BACKUP_DIR.glob("matches-*.db"))[:-BACKUPS_KEPT]:
+                old.unlink()
+        voice_dir = RECORDINGS_DIR / VOICE_DIRNAME
+        if voice_dir.is_dir():
+            (BACKUP_DIR / VOICE_DIRNAME).mkdir(parents=True, exist_ok=True)
+            for note in voice_dir.iterdir():
+                copy = BACKUP_DIR / VOICE_DIRNAME / note.name
+                if note.is_file() and not copy.exists():
+                    shutil.copy2(note, copy)
+    except (OSError, sqlite3.Error):
+        return None
+    return today
+
+
 def format_size(size: int) -> str:
     if size >= 1024**3:
         return f"{size / 1024**3:.1f} GB"
@@ -195,6 +272,9 @@ def index(
     total_size = sum(p.stat().st_size for p in RECORDINGS_DIR.rglob("*") if p.is_file())
     # The app can stay open for days, so don't rely on startup alone.
     recorder.purge_originals(RECORDINGS_DIR, ORIGINALS_RETENTION_DAYS)
+    if purge_old_recordings():
+        matches = storage.list_matches(db_path=db_path())
+    backup = run_backup()
     return templates.TemplateResponse(
         request,
         "index.html",
@@ -210,6 +290,10 @@ def index(
                 if m.video_file and Path(m.video_file).name in sizes
             },
             "total_size": format_size(total_size) if total_size else None,
+            "retention_weeks": recording_retention_weeks(),
+            "backup": backup,
+            "backup_dir": BACKUP_DIR,
+            "matchup_notes": storage.matchup_notes(db_path=db_path()),
             "recording": recording,
             "recording_problem": _recording_problem,
             "marks": len(recorder.read_marks(recording.video_path)) if recording else 0,
@@ -243,12 +327,13 @@ def stats(request: Request):
             "stats": insights.build(matches, events),
             "labels": storage.LABELS,
             "openings": insights.openings(hands),
+            "tempo": insights.tempo(matches, events),
         },
     )
 
 
 @app.get("/decks")
-def decks_page(request: Request):
+def decks_page(request: Request, add: str = ""):
     matches = storage.list_matches(db_path=db_path())
     versions = storage.list_deck_versions(db_path=db_path())
     names = sorted({m.deck for m in matches} | {v.deck for v in versions}, key=str.lower)
@@ -279,6 +364,25 @@ def decks_page(request: Request):
             overall.add(m.result)
             if m.deck_version_id is None:
                 unversioned.add(m.result)
+        # From the battle logs of this deck's matches: what gets played.
+        logged = [(m, battlelog.parse(m.battle_log)) for m in deck_matches if m.battle_log]
+        usage: dict[str, list[int]] = {}  # card -> [games played in, times played]
+        seen: set[str] = set()
+        for m, log in logged:
+            # Only games played with the current list can show it to be
+            # incomplete; older games had cards that have since been cut.
+            if previous and m.deck_version_id == previous.id:
+                seen |= log.cards_seen(log.me)
+            for card, times in log.cards_played(log.me).items():
+                entry = usage.setdefault(card, [0, 0])
+                entry[0] += 1
+                entry[1] += times
+        listed = (
+            {c.name for section in decks.sections(previous.decklist) for c in section.cards}
+            if previous
+            else set()
+        )
+        missing = sorted(seen - listed) if previous else []
         deck_views.append(
             {
                 "name": name,
@@ -286,9 +390,19 @@ def decks_page(request: Request):
                 "unversioned": unversioned,
                 "versions": list(reversed(rows)),  # newest first
                 "current": previous,
+                "logged_games": len(logged),
+                "usage": sorted(usage.items(), key=lambda item: (-item[1][0], -item[1][1], item[0])),
+                "never_played": sorted(listed - set(usage)) if logged else [],
+                "missing": missing,
+                # the current list with the missing cards added, ready to review
+                "with_missing": (
+                    previous.decklist.rstrip() + "\n" + "\n".join(f"1 {card}" for card in missing)
+                    if previous and missing
+                    else ""
+                ),
             }
         )
-    return templates.TemplateResponse(request, "decks.html", {"decks": deck_views})
+    return templates.TemplateResponse(request, "decks.html", {"decks": deck_views, "add": add})
 
 
 @app.get("/cards/image/{set_code}/{number}")
@@ -446,8 +560,10 @@ def create_match(
         )
         detect_turns_in_background(match_id)
     # With a recording attached the next thing to do is watch it back.
+    # Straight to the match, opened on what to take from it.
     return RedirectResponse(
-        f"/matches/{match_id}" if video_path or log is not None else "/", status_code=303
+        f"/matches/{match_id}?wrapup=1" if video_path or log is not None else "/",
+        status_code=303,
     )
 
 
@@ -480,6 +596,17 @@ def match_detail(request: Request, match_id: int):
             "can_transcribe": transcribe.available(),
             "battle_log": _battle_log_json(match.battle_log, match),
             "detecting_turns": match_id in _detecting,
+            "matchup_note": storage.matchup_notes(db_path=db_path()).get(match.opponent_deck or "", ""),
+            "known_decks": sorted(
+                {
+                    d
+                    for m in storage.list_matches(db_path=db_path())
+                    for d in (m.deck, m.opponent_deck)
+                    if d
+                }
+            ),
+            "not_in_list": _played_but_not_listed(match),
+            "wrap_up": request.query_params.get("wrapup") == "1",
         },
     )
 
@@ -519,6 +646,8 @@ def _opponent_deck_name(log: battlelog.BattleLog, match_id: int) -> str | None:
     for other in storage.list_matches(db_path=db_path()):
         if other.id == match_id or not other.battle_log or not other.opponent_deck:
             continue
+        if other.opponent_auto:
+            continue  # itself a guess from a log, not a name to pass on
         earlier = battlelog.parse(other.battle_log)
         if earlier.deck_name(earlier.opponent) == suggested:
             return other.opponent_deck
@@ -537,7 +666,17 @@ def _apply_battle_log(match_id: int, text: str, log: battlelog.BattleLog) -> Non
     if match is not None and not match.opponent_deck:
         name = _opponent_deck_name(log, match_id)
         if name:
-            storage.set_opponent_deck(match_id, name, db_path=db_path())
+            storage.set_opponent_deck(match_id, name, auto=True, db_path=db_path())
+
+
+def _played_but_not_listed(match: storage.Match) -> list[str]:
+    """Cards the battle log shows in my deck that the saved list lacks — a
+    sign the list on the Decks page is out of date."""
+    listed = _deck_cards(match)
+    if not match.battle_log or not listed:
+        return []
+    log = battlelog.parse(match.battle_log)
+    return sorted(log.cards_seen(log.me) - set(listed))
 
 
 def _battle_log_json(text: str | None, match: storage.Match | None = None) -> dict | None:
@@ -666,16 +805,68 @@ def delete_recording(match_id: int):
     active = active_recording()
     if active is not None and active.video_path.name == name:
         raise HTTPException(status_code=409, detail="Still recording this video")
-    video_path = RECORDINGS_DIR / name
-    for path in (
-        video_path,
-        video_path.with_suffix(".json"),
-        video_path.with_suffix(".log"),
-        RECORDINGS_DIR / recorder.ORIGINALS_DIRNAME / name,
-    ):
-        path.unlink(missing_ok=True)
+    _remove_recording(name)
     storage.clear_video(match_id, db_path=db_path())
     return RedirectResponse(f"/matches/{match_id}", status_code=303)
+
+
+class MatchIn(BaseModel):
+    deck: str
+    opponent_deck: str = ""
+    result: storage.Result
+
+
+@app.put("/matches/{match_id}")
+def edit_match(match_id: int, body: MatchIn):
+    """Correct the deck, opponent or result a match was logged with."""
+    _require_match(match_id)
+    deck = body.deck.strip()
+    if not deck:
+        raise HTTPException(status_code=400, detail="A match needs a deck")
+    storage.update_match(
+        match_id, deck, body.opponent_deck.strip() or None, body.result, db_path=db_path()
+    )
+    return {"ok": True}
+
+
+@app.post("/matches/{match_id}/delete")
+def delete_match(match_id: int):
+    """Remove a match with its notes, spoken notes and recording."""
+    match = _require_match(match_id)
+    active = active_recording()
+    if active is not None and match.video_file and active.video_path.name == Path(match.video_file).name:
+        raise HTTPException(status_code=409, detail="Still recording this video")
+    for event in storage.list_events(match_id, db_path=db_path()):
+        if event.audio_file:
+            (RECORDINGS_DIR / VOICE_DIRNAME / Path(event.audio_file).name).unlink(missing_ok=True)
+    if match.video_file:
+        _remove_recording(Path(match.video_file).name)
+    storage.delete_match(match_id, db_path=db_path())
+    return RedirectResponse("/", status_code=303)
+
+
+class MatchupNoteIn(BaseModel):
+    opponent_deck: str
+    note: str = ""
+
+
+@app.put("/matchups/note")
+def set_matchup_note(body: MatchupNoteIn):
+    opponent = body.opponent_deck.strip()
+    if not opponent:
+        raise HTTPException(status_code=400, detail="Which opponent deck?")
+    storage.set_matchup_note(opponent, body.note.strip(), db_path=db_path())
+    return {"opponent_deck": opponent, "note": body.note.strip() or None}
+
+
+@app.post("/settings/recording-retention")
+def set_recording_retention(weeks: str = Form("")):
+    """How long recordings are kept; empty for keeping them until deleted
+    by hand."""
+    if weeks and not (weeks.isdigit() and 1 <= int(weeks) <= 520):
+        raise HTTPException(status_code=400, detail="Weeks must be a number")
+    storage.set_setting("recording_retention_weeks", weeks or None, db_path=db_path())
+    return RedirectResponse("/", status_code=303)
 
 
 class GameStartIn(BaseModel):

@@ -18,6 +18,8 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
     monkeypatch.setattr(webapp, "RECORDINGS_DIR", tmp_path / "recordings")
     monkeypatch.setattr(webapp, "_recording", None)
     monkeypatch.setattr(webapp, "_recording_problem", None)
+    # Backups go to a real folder outside the project; never from a test.
+    monkeypatch.setattr(webapp, "BACKUP_DIR", tmp_path / "backups")
     # No test should read a real video; those that want turns say so.
     monkeypatch.setattr(turns, "detect_turns", lambda path: [])
     monkeypatch.setattr(recorder, "game_crop", lambda: None)
@@ -164,7 +166,7 @@ def test_create_match_attaches_recording(client: TestClient) -> None:
 
     assert resp.status_code == 303
     match = storage.list_matches()[0]
-    assert resp.headers["location"] == f"/matches/{match.id}"
+    assert resp.headers["location"] == f"/matches/{match.id}?wrapup=1"
     assert Path(match.video_file).name == "game.mp4"
     # once attached it is no longer offered for another match
     assert 'value="game.mp4"' not in client.get("/").text
@@ -630,7 +632,7 @@ def test_logging_a_match_with_a_battle_log_takes_the_result_from_it(client: Test
     )
 
     match = storage.list_matches()[0]
-    assert resp.headers["location"] == f"/matches/{match.id}"
+    assert resp.headers["location"] == f"/matches/{match.id}?wrapup=1"
     assert (match.result, match.turn_order) == ("win", "second")
     assert match.battle_log.startswith("Setup")
 
@@ -749,3 +751,117 @@ def test_comment_on_a_battle_log_line(client: TestClient) -> None:
     page = client.get("/moments").text
     assert "bench order" in page and "Turn 2" in page
     assert client.delete(f"/events/{note['id']}").status_code == 204
+
+
+def test_edit_and_delete_a_match(client: TestClient) -> None:
+    recordings = webapp.RECORDINGS_DIR
+    (recordings / "voice").mkdir(parents=True)
+    for name in ("game.mp4", "game.json", "voice/9-abc.webm", "other.mp4"):
+        (recordings / name).write_bytes(b"x")
+    storage.add_deck_version("Pult", "4 Dragapult ex TWM 130")
+    match_id = storage.log_match(deck="Plut", opponent_deck="iono", result="loss", video_file="recordings/game.mp4")
+    storage.add_event(match_id, "note", offset_seconds=5.0, audio_file="9-abc.webm")
+
+    resp = client.put(f"/matches/{match_id}", json={"deck": "Pult", "opponent_deck": "Gardevoir", "result": "win"})
+    assert resp.status_code == 200
+    match = storage.get_match(match_id)
+    assert (match.deck, match.opponent_deck, match.result) == ("Pult", "Gardevoir", "win")
+    assert match.deck_version_id is not None  # now counts towards Pult's saved list
+    assert client.put(f"/matches/{match_id}", json={"deck": " ", "result": "win"}).status_code == 400
+
+    resp = client.post(f"/matches/{match_id}/delete", follow_redirects=False)
+    assert resp.status_code == 303
+    assert storage.get_match(match_id) is None
+    assert storage.list_all_events() == []
+    assert sorted(p.name for p in recordings.rglob("*") if p.is_file()) == ["other.mp4"]
+
+
+def test_matchup_note_shows_on_every_match_against_that_deck(client: TestClient) -> None:
+    first = storage.log_match(deck="Pult", opponent_deck="Tauros", result="loss")
+    second = storage.log_match(deck="Pult", opponent_deck="Tauros", result="win")
+
+    client.put("/matchups/note", json={"opponent_deck": "Tauros", "note": "keep Budew off the Active Spot"})
+
+    for match_id in (first, second):
+        assert "keep Budew off the Active Spot" in client.get(f"/matches/{match_id}").text
+    assert "keep Budew off the Active Spot" in client.get("/").text
+    client.put("/matchups/note", json={"opponent_deck": "Tauros", "note": ""})
+    assert storage.matchup_notes() == {}
+
+
+def test_old_recordings_are_deleted_only_once_a_period_is_chosen(client: TestClient) -> None:
+    recordings = webapp.RECORDINGS_DIR
+    recordings.mkdir()
+    for name in ("old.mp4", "new.mp4"):
+        (recordings / name).write_bytes(b"x")
+    old = storage.log_match(deck="Pult", result="win", video_file="recordings/old.mp4")
+    new = storage.log_match(deck="Pult", result="win", video_file="recordings/new.mp4")
+    storage.add_note(old, "still here", offset_seconds=5.0)
+    with storage.connect() as conn:
+        conn.execute("UPDATE matches SET played_at_utc = '2020-01-01T00:00:00+00:00' WHERE id = ?", (old,))
+
+    client.get("/")
+    assert (recordings / "old.mp4").exists()  # nothing is deleted by default
+
+    client.post("/settings/recording-retention", data={"weeks": "8"}, follow_redirects=False)
+    client.get("/")
+
+    assert not (recordings / "old.mp4").exists()
+    assert (recordings / "new.mp4").exists()
+    assert storage.get_match(old).video_file is None
+    assert storage.get_match(new).video_file is not None
+    assert [e.detail for e in storage.list_events(old)] == ["still here"]
+    assert client.post("/settings/recording-retention", data={"weeks": "soon"}).status_code == 400
+
+
+def test_daily_backup_of_database_and_spoken_notes(client: TestClient) -> None:
+    voice = webapp.RECORDINGS_DIR / "voice"
+    voice.mkdir(parents=True)
+    (voice / "1-abc.webm").write_bytes(b"spoken")
+    storage.log_match(deck="Pult", result="win")
+
+    page = client.get("/").text
+
+    copies = list(webapp.BACKUP_DIR.glob("matches-*.db"))
+    assert len(copies) == 1
+    assert [m.deck for m in storage.list_matches(db_path=copies[0])] == ["Pult"]
+    assert (webapp.BACKUP_DIR / "voice" / "1-abc.webm").read_bytes() == b"spoken"
+    assert "Backed up today" in page
+    # the same day again: no second copy
+    client.get("/")
+    assert len(list(webapp.BACKUP_DIR.glob("matches-*.db"))) == 1
+
+
+def test_decks_page_shows_card_usage_and_cards_missing_from_the_list(client: TestClient) -> None:
+    text = (Path(__file__).parent / "data" / "battle_log.txt").read_text()
+    # a game with an earlier list doesn't make the current list incomplete
+    client.post("/matches", data={"deck": "Pult", "result": "win", "battle_log": text})
+    storage.add_deck_version("Pult", "4 Dreepy TWM 128\n2 Budew PRE 4\n1 Iono PAL 185")
+    assert "Not in this list" not in client.get("/decks").text
+    client.post("/matches", data={"deck": "Pult", "result": "win", "battle_log": text})
+
+    page = client.get("/decks").text
+
+    assert "from 2 games with a battle log" in page
+    assert "Not in this list, but in your deck according to the logs" in page
+    assert "Buddy-Buddy Poffin" in page
+    assert "never played in these games: Iono" in page
+    # the list opened with the missing cards added, for review
+    opened = client.get("/decks?add=Pult").text
+    assert "1 Iono PAL 185\n1 Basic Darkness Energy" in opened
+    match_id = max(m.id for m in storage.list_matches())
+    assert "Update the list" in client.get(f"/matches/{match_id}").text
+
+
+def test_a_guessed_opponent_name_is_not_passed_on(client: TestClient) -> None:
+    text = (Path(__file__).parent / "data" / "battle_log.txt").read_text()
+    data = {"deck": "Pult", "result": "win", "battle_log": text}
+    client.post("/matches", data=data)
+    first = storage.list_matches()[0]
+    assert first.opponent_auto == 1
+
+    # correcting it by hand makes it a name worth reusing
+    client.put(f"/matches/{first.id}", json={"deck": "Pult", "opponent_deck": "Banette", "result": "win"})
+    assert storage.get_match(first.id).opponent_auto == 0
+    client.post("/matches", data=data)
+    assert max(storage.list_matches(), key=lambda m: m.id).opponent_deck == "Banette"

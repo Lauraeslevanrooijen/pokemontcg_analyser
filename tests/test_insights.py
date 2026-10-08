@@ -86,3 +86,21 @@ def test_a_comment_on_a_log_line_counts_in_its_turn(tmp_path: Path) -> None:
 
     assert insights.build(matches, events).misplays_by_turn == {6: 1}
     assert insights.moments(matches, events, "misplay")[0].turn == 6
+
+
+def test_turn_lengths_and_tempo(tmp_path: Path) -> None:
+    db = tmp_path / "m.db"
+    detected = storage.log_match(deck="Pult", result="win", db_path=db)
+    storage.replace_turns(detected, [(10.0, "opponent"), (40.0, "you"), (130.0, "opponent")], db_path=db)
+    by_hand = storage.log_match(deck="Pult", result="loss", db_path=db)
+    storage.set_turn_order(by_hand, "first", db_path=db)
+    for offset in (0.0, 60.0, 80.0):
+        storage.add_event(by_hand, "turn", offset_seconds=offset, db_path=db)
+    matches, events = storage.list_matches(db_path=db), storage.list_all_events(db_path=db)
+    first = next(m for m in matches if m.id == detected)
+
+    lengths = insights.turn_lengths(first, [e for e in events if e.match_id == detected])
+    assert lengths == [(1, "opponent", 30.0), (2, "you", 90.0)]  # the last turn has no end
+
+    # by hand: I went first, so turn 1 (60s) is mine and turn 2 (20s) the opponent's
+    assert insights.tempo(matches, events) == {"you": (75.0, 2), "opponent": (25.0, 2)}

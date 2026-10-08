@@ -121,3 +121,51 @@ def test_deck_name_from_the_main_attackers() -> None:
     # nobody attacked in this one: fall back to what was played
     quiet = battlelog.parse(LOG)
     assert quiet.deck_name(quiet.opponent) == "Dhelmise / Poltchageist"
+
+
+EVOLVING = """Setup
+Ash drew 7 cards for the opening hand.
+- 7 drawn cards.
+   • Pikachu, Iono
+
+Gary's Turn
+Gary played Abra to the Bench.
+Gary evolved Abra to Kadabra on the Bench.
+Gary's Kadabra used Psyshot on Ash's Pikachu for 30 damage.
+Gary's Kadabra used Psyshot on Ash's Pikachu for 30 damage.
+
+Ash's Turn
+Ash drew Nest Ball.
+Ash played Nest Ball.
+- Ash drew Raichu and played it to the Bench.
+Ash attached Basic Lightning Energy to Pikachu in the Active Spot.
+Ash played Iono.
+- Ash drew 2 cards: Switch, Pikachu
+
+Gary's Turn
+Gary evolved Kadabra to Alakazam on the Bench.
+Gary evolved Duskull to Dusclops on the Bench.
+"""
+
+
+def test_deck_is_named_after_its_final_evolutions() -> None:
+    log = battlelog.parse(EVOLVING)
+
+    # Kadabra did all the attacking, but the deck is an Alakazam deck
+    assert log.deck_name("Gary") == "Alakazam / Dusclops"
+
+
+def test_cards_played_and_seen() -> None:
+    log = battlelog.parse(EVOLVING)
+
+    assert log.cards_played("Ash") == {
+        "Nest Ball": 1,
+        "Raichu": 1,
+        "Basic Lightning Energy": 1,
+        "Iono": 1,
+    }
+    # also what was only drawn or sat in the opening hand
+    assert log.cards_seen("Ash") == {
+        "Pikachu", "Iono", "Nest Ball", "Raichu", "Basic Lightning Energy", "Switch",
+    }
+    assert log.cards_played("Gary") == {"Abra": 1, "Kadabra": 1, "Alakazam": 1, "Dusclops": 1}

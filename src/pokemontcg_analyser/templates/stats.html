@@ -49,6 +49,28 @@
       </tbody>
     </table>
 
+    {% if tempo %}
+      <h2>Tempo</h2>
+      <p class="muted">Average length of a turn, from the turn markers. The last turn of each game is left out.</p>
+      <table>
+        <thead><tr><th>Whose turn</th><th class="num">Turns</th><th class="num">Average</th><th></th></tr></thead>
+        <tbody>
+          {% set slowest = tempo.values()|map(attribute=0)|max %}
+          {% for key, name in [('you', 'Yours'), ('opponent', "Opponent's")] %}
+            {% if key in tempo %}
+              {% set seconds, turns = tempo[key] %}
+              <tr>
+                <td>{{ name }}</td>
+                <td class="num">{{ turns }}</td>
+                <td class="num">{{ '%d:%02d' % (seconds // 60, seconds % 60) }}</td>
+                <td style="width: 30%;"><span class="bar" style="width: {{ '%.0f' % (seconds / slowest * 100) }}%; background: var(--muted);"></span></td>
+              </tr>
+            {% endif %}
+          {% endfor %}
+        </tbody>
+      </table>
+    {% endif %}
+
     <h2>Opening hands</h2>
     {% if not openings.games %}
       <p class="muted">Nothing here until a match has a battle log. Paste one when you log a match.</p>

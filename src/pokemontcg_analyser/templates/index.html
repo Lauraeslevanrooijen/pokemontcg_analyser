@@ -143,7 +143,8 @@
             Copy it in the game before leaving the summary screen (Battle Log, then Cmd+A and Cmd+C). The result
             and who went first are then taken from the log.
           </p>
-          <textarea name="battle_log" rows="6" style="width: 100%; font-size: 0.8em; font-family: ui-monospace, monospace;"
+          <button type="button" class="secondary" id="log-paste" style="margin-bottom: 6px;">Paste from clipboard</button>
+          <textarea name="battle_log" id="log-text" rows="6" style="width: 100%; font-size: 0.8em; font-family: ui-monospace, monospace;"
                     placeholder="Paste the battle log"></textarea>
         </details>
       </form>
@@ -197,7 +198,47 @@
   {% else %}
     <p class="muted">No matches logged yet.</p>
   {% endif %}
-  {% if total_size %}
-    <p class="muted" style="font-size: 0.85em;">Recordings and voice notes use {{ total_size }} on disk.</p>
+  {% if matchup_notes %}
+    <h2>Matchup notes</h2>
+    <table>
+      <tbody>
+        {% for opponent, note in matchup_notes.items() %}
+          <tr><td style="white-space: nowrap; width: 1%;"><strong>{{ opponent }}</strong></td><td>{{ note }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
   {% endif %}
+
+  <div class="muted" style="font-size: 0.85em; margin-top: 24px;">
+    {% if total_size %}<p>Recordings and voice notes use {{ total_size }} on disk.</p>{% endif %}
+    <form method="post" action="/settings/recording-retention" style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+      <label for="retention">Delete recordings automatically</label>
+      <select name="weeks" id="retention" onchange="this.form.submit()">
+        <option value="" {{ 'selected' if not retention_weeks else '' }}>never</option>
+        {% for w in [2, 4, 8, 12, 26] %}
+          <option value="{{ w }}" {{ 'selected' if retention_weeks == w else '' }}>after {{ w }} weeks</option>
+        {% endfor %}
+      </select>
+      <span>Battle logs, notes and stats are kept; only the video goes.</span>
+    </form>
+    <p>
+      {% if backup %}
+        Backed up today to {{ backup_dir }} (database and spoken notes; recordings are not included).
+      {% else %}
+        The backup to {{ backup_dir }} did not work today.
+      {% endif %}
+    </p>
+  </div>
+  <script>
+    const logPaste = document.getElementById('log-paste');
+    if (logPaste) {
+      logPaste.addEventListener('click', async () => {
+        try {
+          document.getElementById('log-text').value = await navigator.clipboard.readText();
+        } catch (err) {
+          alert('Could not read the clipboard. Click in the field and paste with Cmd+V instead.');
+        }
+      });
+    }
+  </script>
 {% endblock %}

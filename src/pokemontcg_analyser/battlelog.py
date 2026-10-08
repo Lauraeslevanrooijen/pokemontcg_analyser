@@ -20,6 +20,13 @@ _SETUP_ACTOR = re.compile(r"^(.+?) (?:chose|won the coin toss|decided to go|drew
 # Where a Pokémon is named in an action, to list what the opponent played.
 _PRIZES = re.compile(r"^(.+?) took (a|\d+) Prize cards?\.")
 _ATTACK = re.compile(r"^(.+?)'s (.+?) used .+? on .+? for \d+ damage")
+_EVOLVED = re.compile(r"^(.+?) evolved (.+?) to (.+?) (?:on the Bench|in the Active Spot)")
+_PLAYED = re.compile(r"^(.+?) played (.+?)(?: to the (?:Active Spot|Bench|Stadium spot))?\.$")
+_ATTACHED = re.compile(r"^(.+?) attached (.+?) to ")
+_DREW_ONE = re.compile(
+    r"^(.+?) drew (?!a card\b|\d+ cards?\b)(.+?)( and played it to the Bench)?\.$"
+)
+_LISTED = re.compile(r"^(.+?) (?:drew|discarded) \d+ cards?(?: and played them to the Bench)?: (.+)$")
 _POKEMON = [
     re.compile(r"played (.+?) to the (?:Active Spot|Bench)"),
     re.compile(r"evolved .+? to (.+?) (?:on the Bench|in the Active Spot)"),
@@ -115,14 +122,74 @@ class BattleLog:
             )
         return race
 
+    def cards_played(self, player: str | None) -> dict[str, int]:
+        """How often a player put each card to use: played it, attached it,
+        or evolved into it."""
+        played: dict[str, int] = {}
+
+        def count(card: str) -> None:
+            played[card] = played.get(card, 0) + 1
+
+        for action in self._actions():
+            for pattern, group in ((_EVOLVED, 3), (_ATTACHED, 2), (_PLAYED, 2)):
+                hit = pattern.match(action.text)
+                if hit:
+                    if hit.group(1) == player:
+                        count(hit.group(group))
+                    break
+            for detail in action.details:
+                # "drew 2 cards and played them to the Bench: Dreepy, Dreepy"
+                hit = _LISTED.match(detail)
+                if hit and hit.group(1) == player and "played them" in detail:
+                    for card in hit.group(2).split(","):
+                        count(card.strip())
+                one = _DREW_ONE.match(detail)
+                if one and one.group(1) == player and one.group(3):
+                    count(one.group(2))
+        return played
+
+    def cards_seen(self, player: str | None) -> set[str]:
+        """Every card the log shows to be in a player's deck: played, or
+        named when drawn or discarded from hand."""
+        seen = set(self.cards_played(player))
+        if player == self.me:
+            seen.update(self.opening_hand())
+        for action in self._actions():
+            for line in [action.text, *action.details]:
+                one = _DREW_ONE.match(line)
+                if one and one.group(1) == player:
+                    seen.add(one.group(2))
+                many = _LISTED.match(line)
+                if many and many.group(1) == player:
+                    seen.update(card.strip() for card in many.group(2).split(","))
+        return seen
+
+    def _actions(self) -> list[Action]:
+        return self.setup + [a for turn in self.turns for a in turn.actions]
+
     def deck_name(self, player: str | None) -> str | None:
-        """A name for a player's deck from what it did: the Pokémon that
-        attacked most, plus a second one if it did a real share of the
-        attacking, or else the first two that were played. Alphabetical, and
-        without one-off attackers, so the same deck tends to get the same
-        name from one game to the next."""
+        """A name for a player's deck from what it did.
+
+        Decks are named after the fully evolved Pokémon they are built
+        around, so the ends of the evolution lines seen in the log come
+        first (Alakazam, not the Kadabra that did the early attacking). A
+        deck that evolved nothing is named after the Pokémon that attacked
+        most, plus a second one if it did a real share of the attacking,
+        or else the first two that were played. Alphabetical, and without
+        one-off attackers, so the same deck tends to get the same name from
+        one game to the next."""
         if not player:
             return None
+        evolved_from, evolved_to = set(), []
+        for action in self._actions():
+            hit = _EVOLVED.match(action.text)
+            if hit and hit.group(1) == player:
+                evolved_from.add(hit.group(2))
+                if hit.group(3) not in evolved_to:
+                    evolved_to.append(hit.group(3))
+        final_forms = [name for name in evolved_to if name not in evolved_from]
+        if final_forms:
+            return " / ".join(sorted(final_forms[:2]))
         attacks: dict[str, int] = {}
         for turn in self.turns:
             for action in turn.actions:
