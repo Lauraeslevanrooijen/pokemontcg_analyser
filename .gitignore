@@ -14,6 +14,7 @@ recordings/
 *.mp4
 *.mov
 data/cards.json
+data/cards/
 data/*.db
 data/app-profile/
 data/app.log

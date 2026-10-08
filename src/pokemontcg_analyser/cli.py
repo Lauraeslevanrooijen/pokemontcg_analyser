@@ -7,7 +7,7 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from . import cards, desktop, recorder, storage
+from . import cards, decks, desktop, recorder, storage
 
 app = typer.Typer(help="Record and analyse your own Pokémon TCG Live matches.")
 matches_app = typer.Typer(help="Log and review match results.")
@@ -171,10 +171,20 @@ def install_app(
 
 @cards_app.command("sync")
 def cards_sync() -> None:
-    """Download the full card database from pokemontcg.io into a local cache."""
-    console.print("Fetching card database from pokemontcg.io (this may take a minute)...")
-    count = cards.sync_cache()
-    console.print(f"Cached {count} cards to {cards.DEFAULT_CACHE_PATH}")
+    """Download card data and pictures for every saved decklist, so the
+    Decks page shows them without waiting (and works offline)."""
+    printings = [
+        (card.set_code, card.number)
+        for version in storage.list_deck_versions()
+        for section in decks.sections(version.decklist)
+        for card in section.cards
+        if card.printing
+    ]
+    if not printings:
+        console.print("No saved decklists yet.")
+        return
+    count = cards.sync(printings)
+    console.print(f"{count} of {len(set(printings))} cards have a picture in {cards.DEFAULT_CACHE_DIR}/")
 
 
 if __name__ == "__main__":

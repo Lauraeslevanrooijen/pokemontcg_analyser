@@ -13,9 +13,8 @@ Early scaffold. Working today:
 - `matches` — log match metadata (deck, opponent deck, result) to a local
   SQLite database, list/summarise your stats, and attach timestamped notes
   to a match for later review.
-- `cards sync` — pull the card database from the public
-  [pokemontcg.io](https://pokemontcg.io) API and cache it locally, as the
-  foundation for card recognition.
+- `cards sync` — fetch card data and pictures from [TCGdex](https://tcgdex.dev)
+  for your saved decklists. The Decks page also fetches them as needed.
 - `serve` — a local web app: start and stop a recording with a button (and
   flag moments while it runs), log the match against it, then play the video
   back and annotate it: labelled notes (misplay, good play, key moment, bad
@@ -88,7 +87,7 @@ pokemontcg-analyser matches annotate --match-id 1 --text "misplayed retreat here
 # Review a match's notes
 pokemontcg-analyser matches notes 1
 
-# Pull the card database (for future card recognition)
+# Fetch card pictures for your saved decklists
 pokemontcg-analyser cards sync
 
 # Open the web app (record a match, watch it back + take notes in the browser)
@@ -106,7 +105,7 @@ pokemontcg-analyser install-app
 ```
 src/pokemontcg_analyser/
   recorder.py   screen capture (ffmpeg/avfoundation)
-  cards.py      pokemontcg.io client + local card cache
+  cards.py      TCGdex card data + pictures, cached locally
   storage.py    SQLite schema + match logging/stats
   analysis.py   frame extraction
   webapp.py     local review app (FastAPI + Jinja2 templates)

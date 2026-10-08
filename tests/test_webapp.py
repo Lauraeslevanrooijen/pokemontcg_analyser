@@ -6,7 +6,7 @@ from fastapi.testclient import TestClient
 
 import time
 
-from pokemontcg_analyser import recorder, storage, transcribe, turns, webapp
+from pokemontcg_analyser import cards, recorder, storage, transcribe, turns, webapp
 
 
 @pytest.fixture()
@@ -452,6 +452,7 @@ def test_decks_page_shows_versions_with_their_records(client: TestClient) -> Non
     assert "8 cards" in page
     assert "<span>Dragapult ex</span>" in page
     assert "TWM 130" in page
+    assert 'src="/cards/image/TWM/130"' in page
     assert client.post("/decks", data={"deck": " ", "decklist": "x"}).status_code == 400
 
 
@@ -526,3 +527,25 @@ def test_detect_turns_replaces_markers_and_fills_in_who_went_first(
     monkeypatch.setattr(turns, "detect_turns", lambda path: [])
     assert client.post(f"/matches/{match_id}/detect-turns").status_code == 422
     assert len(storage.list_events(match_id)) == 3  # nothing was wiped
+
+
+def test_card_image_is_served_from_the_local_cache(
+    client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    picture = tmp_path / "sv06-130.webp"
+    picture.write_bytes(b"webp-bytes")
+    asked = []
+
+    def fake_image_path(set_code: str, number: str):
+        asked.append((set_code, number))
+        return picture if number == "130" else None
+
+    monkeypatch.setattr(cards, "image_path", fake_image_path)
+
+    resp = client.get("/cards/image/TWM/130")
+    assert resp.status_code == 200
+    assert resp.content == b"webp-bytes"
+    assert resp.headers["content-type"] == "image/webp"
+    assert client.get("/cards/image/TWM/999").status_code == 404
+    assert client.get("/cards/image/TW.M/130").status_code == 404
+    assert asked == [("TWM", "130"), ("TWM", "999")]

@@ -63,6 +63,14 @@ class ListedCard:
     name: str  # readable: "Basic Lightning Energy"
     printing: str  # set code and number, "MEE 12"; empty if the line had none
 
+    @property
+    def set_code(self) -> str:
+        return self.printing.split()[0] if self.printing else ""
+
+    @property
+    def number(self) -> str:
+        return self.printing.split()[-1] if self.printing else ""
+
 
 @dataclass(frozen=True)
 class Section:

@@ -17,12 +17,12 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import RedirectResponse, Response
+from fastapi.responses import FileResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 
-from . import decks, insights, recorder, storage, transcribe, turns
+from . import cards, decks, insights, recorder, storage, transcribe, turns
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
 RECORDINGS_DIR = Path("recordings")
@@ -265,6 +265,18 @@ def decks_page(request: Request):
             }
         )
     return templates.TemplateResponse(request, "decks.html", {"decks": deck_views})
+
+
+@app.get("/cards/image/{set_code}/{number}")
+def card_image(set_code: str, number: str):
+    """A card's picture by its decklist printing ("TWM", "130"), fetched
+    from TCGdex the first time and served from disk after that."""
+    if not (set_code.isalnum() and number.isalnum()):
+        raise HTTPException(status_code=404, detail="No such card")
+    path = cards.image_path(set_code, number)
+    if path is None:
+        raise HTTPException(status_code=404, detail="No picture for this card")
+    return FileResponse(path, media_type="image/webp", headers={"Cache-Control": "max-age=604800"})
 
 
 @app.post("/decks")

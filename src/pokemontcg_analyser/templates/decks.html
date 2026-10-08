@@ -2,20 +2,39 @@
 {% block title %}Decks — Pokémon TCG Live analyser{% endblock %}
 {% macro record(r) %}{% if r.total %}{{ r.wins }}&ndash;{{ r.losses }}&ndash;{{ r.ties }} <span class="muted">({{ '%.0f%%' % (r.win_rate * 100) }})</span>{% else %}<span class="muted">no games yet</span>{% endif %}{% endmacro %}
 {% macro card_list(sections) %}
-  <div class="decklist">
-    {% for section in sections %}
-      <div>
-        <div class="decklist-title">{{ section.title or 'Cards' }} <span class="muted">{{ section.total }}</span></div>
-        {% for card in section.cards %}
-          <div class="decklist-card">
-            <span class="num">{{ card.count }}</span>
-            <span>{{ card.name }}</span>
-            <span class="muted printing">{{ card.printing }}</span>
-          </div>
-        {% endfor %}
-      </div>
-    {% endfor %}
-  </div>
+  {% for section in sections %}
+    <div class="decklist-title">{{ section.title or 'Cards' }} <span class="muted">{{ section.total }}</span></div>
+    <div class="card-grid">
+      {% for card in section.cards %}
+        <div class="card-tile" title="{{ card.count }} {{ card.name }} {{ card.printing }}">
+          {# the name shows through when there is no picture for this card #}
+          <div class="card-fallback">{{ card.name }}<span class="muted">{{ card.printing }}</span></div>
+          {% if card.printing %}
+            <img src="/cards/image/{{ card.set_code }}/{{ card.number }}" alt="{{ card.name }}" loading="lazy"
+                 onerror="this.remove()">
+          {% endif %}
+          <span class="card-count">{{ card.count }}</span>
+        </div>
+      {% endfor %}
+    </div>
+  {% endfor %}
+  <details>
+    <summary class="muted" style="font-size: 0.85em;">As text</summary>
+    <div class="decklist">
+      {% for section in sections %}
+        <div>
+          <div class="decklist-title">{{ section.title or 'Cards' }} <span class="muted">{{ section.total }}</span></div>
+          {% for card in section.cards %}
+            <div class="decklist-card">
+              <span class="num">{{ card.count }}</span>
+              <span>{{ card.name }}</span>
+              <span class="muted printing">{{ card.printing }}</span>
+            </div>
+          {% endfor %}
+        </div>
+      {% endfor %}
+    </div>
+  </details>
 {% endmacro %}
 {% macro version_form(name, decklist) %}
   <form method="post" action="/decks" style="display: grid; gap: 8px; margin-top: 8px;">
@@ -37,6 +56,14 @@
     .decklist-card { display: grid; grid-template-columns: 1.5em minmax(0, 1fr) auto; gap: 8px; padding: 2px 0; font-size: 0.95em; }
     .decklist-card .printing { font-size: 0.8em; align-self: center; white-space: nowrap; }
     details > summary { cursor: pointer; }
+    .card-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: 10px; margin: 8px 0 16px; }
+    .card-tile { position: relative; aspect-ratio: 245 / 337; border-radius: 5px; overflow: hidden; background: var(--bg); border: 1px solid var(--border); }
+    .card-tile img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+    .card-fallback { position: absolute; inset: 0; padding: 8px 6px; font-size: 0.75em; display: flex; flex-direction: column; gap: 4px; overflow-wrap: anywhere; }
+    .card-count {
+      position: absolute; right: 4px; bottom: 4px; min-width: 22px; padding: 1px 6px; border-radius: 999px;
+      background: rgba(0, 0, 0, 0.82); color: #fff; font-weight: 700; font-size: 0.85em; text-align: center;
+    }
   </style>
   <h1>Decks</h1>
   <p class="muted">
@@ -51,6 +78,7 @@
 
       {% if d.versions %}
         {{ card_list(d.versions[0].sections) }}
+        <div style="height: 8px;"></div>
         <table>
           <thead><tr><th>Version</th><th>Saved</th><th>Record</th><th>Changes</th></tr></thead>
           <tbody>
