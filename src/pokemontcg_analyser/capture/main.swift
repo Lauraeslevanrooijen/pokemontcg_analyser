@@ -70,6 +70,7 @@ final class Recorder: NSObject, SCStreamOutput, SCStreamDelegate {
     private var timer: DispatchSourceTimer?
 
     private var latest: CVPixelBuffer?
+    private var shown: CVPixelBuffer?  // the picture written into the last slot
     private var start = CMTime.invalid
     private var lastTick: Int64 = -1
     private var delivered = 0
@@ -130,7 +131,9 @@ final class Recorder: NSObject, SCStreamOutput, SCStreamDelegate {
             AVVideoWidthKey: width,
             AVVideoHeightKey: height,
             AVVideoCompressionPropertiesKey: [
-                AVVideoAverageBitRateKey: 4_000_000,
+                // 4 Mbit/s made a 20-minute match 600 MB; card text stays
+                // sharp at 3.
+                AVVideoAverageBitRateKey: 3_000_000,
                 AVVideoExpectedSourceFrameRateKey: options.fps,
                 // A keyframe at least every 5s keeps seeking precise in the
                 // browser without a large frame to decode every second.
@@ -178,6 +181,9 @@ final class Recorder: NSObject, SCStreamOutput, SCStreamDelegate {
             latest = buffer
             delivered += 1
             if !start.isValid { begin(at: sampleBuffer.presentationTimeStamp) }
+            // Written as it arrives, in the slot its own timestamp falls in.
+            let elapsed = sampleBuffer.presentationTimeStamp - start
+            write(slot: Int64((elapsed.seconds * Double(options.fps)).rounded()))
         } else if let audioInput, start.isValid, audioInput.isReadyForMoreMediaData,
             sampleBuffer.presentationTimeStamp >= start
         {
@@ -185,29 +191,53 @@ final class Recorder: NSObject, SCStreamOutput, SCStreamDelegate {
         }
     }
 
-    // The screen only produces a frame when something changes, so writing
-    // frames as they arrive gives a file with long gaps in it. A fixed clock
-    // writes the newest picture every 1/fps instead: an even frame rate, with
-    // unchanged pictures costing almost nothing to encode.
+    // Time is cut into slots of 1/fps and each slot gets at most one
+    // picture, so the file has an even frame rate. Pictures are written as
+    // the system delivers them. The screen only delivers one when something
+    // changes, so a timer repeats the newest picture into slots that would
+    // otherwise stay empty (which costs almost nothing to encode).
+    //
+    // The timer must not be what drives the writing: in a 20-minute match
+    // with the game fullscreen, the system delivered 29 pictures a second
+    // but the timer only fired about 9 times a second, and a recorder that
+    // wrote on the timer alone kept just a third of them.
     private func begin(at time: CMTime) {
         start = time
         writer.startWriting()
         writer.startSession(atSourceTime: time)
         let timer = DispatchSource.makeTimerSource(queue: queue)
         timer.schedule(deadline: .now(), repeating: 1.0 / Double(options.fps), leeway: .milliseconds(2))
-        timer.setEventHandler { [weak self] in self?.tick() }
+        timer.setEventHandler { [weak self] in self?.fillGap() }
         timer.resume()
         self.timer = timer
     }
 
-    private func tick() {
-        guard !stopping, let latest, videoInput.isReadyForMoreMediaData else { return }
+    private func fillGap() {
         let elapsed = CMClockGetTime(CMClockGetHostTimeClock()) - start
-        let index = Int64((elapsed.seconds * Double(options.fps)).rounded(.down))
-        guard index > lastTick else { return }
-        lastTick = index
-        let time = start + CMTime(value: index, timescale: CMTimeScale(options.fps))
-        if adaptor.append(latest, withPresentationTime: time) { written += 1 }
+        // One slot behind the clock, so a picture that is just arriving
+        // still gets its own slot.
+        write(slot: Int64((elapsed.seconds * Double(options.fps)).rounded(.down)) - 1)
+    }
+
+    private func write(slot: Int64) {
+        guard !stopping, slot > lastTick, let latest else { return }
+        // Slots that were passed over (the timer was late, or a picture
+        // landed one slot ahead) get the picture that was on screen then,
+        // so no slot is left empty. Capped, in case the process was stalled.
+        if let shown, slot - lastTick <= Int64(options.fps) {
+            var missed = lastTick + 1
+            while missed < slot, append(shown, slot: missed) { missed += 1 }
+        }
+        if append(latest, slot: slot) { shown = latest }
+    }
+
+    private func append(_ buffer: CVPixelBuffer, slot: Int64) -> Bool {
+        guard videoInput.isReadyForMoreMediaData else { return false }
+        let time = start + CMTime(value: slot, timescale: CMTimeScale(options.fps))
+        guard adaptor.append(buffer, withPresentationTime: time) else { return false }
+        lastTick = slot
+        written += 1
+        return true
     }
 
     func stream(_ stream: SCStream, didStopWithError error: Error) {
