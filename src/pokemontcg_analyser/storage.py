@@ -54,7 +54,9 @@ CREATE TABLE IF NOT EXISTS match_events (
     kind TEXT NOT NULL,
     detail TEXT,
     label TEXT,
-    audio_file TEXT
+    audio_file TEXT,
+    log_turn INTEGER,
+    log_action INTEGER
 );
 """
 
@@ -74,6 +76,9 @@ def connect(db_path: Path | None = None) -> Iterator[sqlite3.Connection]:
             conn.execute("ALTER TABLE match_events ADD COLUMN label TEXT")
         if "audio_file" not in columns:
             conn.execute("ALTER TABLE match_events ADD COLUMN audio_file TEXT")
+        if "log_turn" not in columns:
+            conn.execute("ALTER TABLE match_events ADD COLUMN log_turn INTEGER")
+            conn.execute("ALTER TABLE match_events ADD COLUMN log_action INTEGER")
         columns = {row["name"] for row in conn.execute("PRAGMA table_info(matches)")}
         if "turn_order" not in columns:
             conn.execute("ALTER TABLE matches ADD COLUMN turn_order TEXT")
@@ -280,6 +285,8 @@ def add_event(
     detail: str | None = None,
     label: Label | None = None,
     audio_file: str | None = None,
+    log_turn: int | None = None,
+    log_action: int | None = None,
     db_path: Path | None = None,
 ) -> int:
     """Insert a single event and return its id."""
@@ -287,10 +294,11 @@ def add_event(
         cur = conn.execute(
             """
             INSERT INTO match_events
-                (match_id, video_offset_seconds, kind, detail, label, audio_file)
-            VALUES (?, ?, ?, ?, ?, ?)
+                (match_id, video_offset_seconds, kind, detail, label, audio_file,
+                 log_turn, log_action)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (match_id, offset_seconds, kind, detail, label, audio_file),
+            (match_id, offset_seconds, kind, detail, label, audio_file, log_turn, log_action),
         )
         return cur.lastrowid
 
@@ -300,13 +308,23 @@ def add_note(
     text: str,
     offset_seconds: float | None = None,
     label: Label | None = None,
+    log_turn: int | None = None,
+    log_action: int | None = None,
     db_path: Path | None = None,
 ) -> int:
-    """Attach a timestamped note to a match. Omit offset for a note about
-    the match as a whole (e.g. a post-game reflection). Returns the new
-    event's id."""
+    """Attach a note to a match: at a moment in the video (`offset_seconds`),
+    on a line of the battle log (`log_turn` and `log_action`), or with
+    neither for a note about the match as a whole. Returns the new event's
+    id."""
     return add_event(
-        match_id, "note", offset_seconds, text or None, label, db_path=db_path
+        match_id,
+        "note",
+        offset_seconds,
+        text or None,
+        label,
+        log_turn=log_turn,
+        log_action=log_action,
+        db_path=db_path,
     )
 
 
@@ -319,6 +337,10 @@ class Event:
     detail: str | None
     label: str | None = None
     audio_file: str | None = None  # a spoken note: filename in recordings/voice/
+    # A comment on a line of the battle log: which turn (0 is the setup)
+    # and which action in it, both counted as the log has them.
+    log_turn: int | None = None
+    log_action: int | None = None
 
 
 def list_events(match_id: int, db_path: Path | None = None) -> list[Event]:

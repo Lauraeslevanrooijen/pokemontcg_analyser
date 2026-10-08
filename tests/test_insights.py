@@ -76,3 +76,13 @@ def test_openings_counts_cards_and_hand_features() -> None:
     one_basic, _ = found.by_feature["Only one Basic Pokémon"]
     assert (one_basic.total, one_basic.losses) == (1, 1)
     assert found.average == {"Basic Pokémon": 1.5, "Energy": 1.5, "Supporter": 0.5}
+
+
+def test_a_comment_on_a_log_line_counts_in_its_turn(tmp_path: Path) -> None:
+    db = tmp_path / "m.db"
+    match_id = storage.log_match(deck="Pult", result="loss", db_path=db)
+    storage.add_note(match_id, "wrong target", label="misplay", log_turn=6, log_action=2, db_path=db)
+    matches, events = storage.list_matches(db_path=db), storage.list_all_events(db_path=db)
+
+    assert insights.build(matches, events).misplays_by_turn == {6: 1}
+    assert insights.moments(matches, events, "misplay")[0].turn == 6

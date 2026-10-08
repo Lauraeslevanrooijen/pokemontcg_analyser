@@ -584,6 +584,8 @@ def _event_json(event: storage.Event) -> dict:
         "label": event.label,
         "audio_url": f"/media/{VOICE_DIRNAME}/{event.audio_file}" if event.audio_file else None,
         "transcribing": event.id in _transcribing,
+        "log_turn": event.log_turn,
+        "log_action": event.log_action,
     }
 
 
@@ -710,6 +712,9 @@ class NoteIn(BaseModel):
     text: str = ""
     offset_seconds: float | None = None
     label: storage.Label | None = None
+    # for a comment on a battle log line: its turn (0 = setup) and action
+    log_turn: int | None = None
+    log_action: int | None = None
 
 
 class TurnIn(BaseModel):
@@ -727,6 +732,8 @@ def add_note(match_id: int, note: NoteIn):
         text,
         offset_seconds=note.offset_seconds,
         label=note.label,
+        log_turn=note.log_turn,
+        log_action=note.log_action,
         db_path=db_path(),
     )
     return _event_json(_require_event(event_id))

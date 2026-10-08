@@ -729,3 +729,23 @@ def test_background_detection_leaves_existing_turn_markers_alone(
     timeline = _wait_for_detection(client, match_id)
 
     assert [e["offset_seconds"] for e in timeline["events"]] == [5.0]
+
+
+def test_comment_on_a_battle_log_line(client: TestClient) -> None:
+    text = (Path(__file__).parent / "data" / "battle_log.txt").read_text()
+    client.post("/matches", data={"deck": "Pult", "result": "win", "battle_log": text})
+    match_id = storage.list_matches()[0].id
+
+    note = client.post(
+        f"/matches/{match_id}/notes",
+        json={"text": "should have benched Meowth first", "label": "misplay", "log_turn": 2, "log_action": 4},
+    ).json()
+
+    assert (note["log_turn"], note["log_action"], note["offset_seconds"]) == (2, 4, None)
+    # editing keeps it on its line
+    edited = client.patch(f"/events/{note['id']}", json={"text": "bench order", "label": "misplay"}).json()
+    assert (edited["log_turn"], edited["log_action"], edited["detail"]) == (2, 4, "bench order")
+    # it counts as a misplay in turn 2, though it has no place in a video
+    page = client.get("/moments").text
+    assert "bench order" in page and "Turn 2" in page
+    assert client.delete(f"/events/{note['id']}").status_code == 204

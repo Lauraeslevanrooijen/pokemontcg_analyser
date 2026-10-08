@@ -65,6 +65,14 @@ def turn_at(events: list[Event], offset: float | None) -> int | None:
     return sum(1 for start in turns if start is not None and start <= offset)
 
 
+def turn_of(events: list[Event], event: Event) -> int | None:
+    """The turn a note belongs to: the one it was written against in the
+    battle log, or else the one its place in the video falls in."""
+    if event.log_turn is not None:
+        return event.log_turn
+    return turn_at(events, event.video_offset_seconds)
+
+
 def moments(
     matches: list[Match], events: list[Event], label: str | None = None
 ) -> list[Moment]:
@@ -79,7 +87,7 @@ def moments(
         for event in match_events:
             if event.label is None or (label is not None and event.label != label):
                 continue
-            found.append(Moment(match, event, turn_at(match_events, event.video_offset_seconds)))
+            found.append(Moment(match, event, turn_of(match_events, event)))
     return found
 
 
@@ -112,7 +120,7 @@ def build(matches: list[Match], events: list[Event]) -> Insights:
             if event.label != "misplay":
                 continue
             misplays_by_result[match.result][0] += 1
-            turn = turn_at(match_events, event.video_offset_seconds)
+            turn = turn_of(match_events, event)
             if turn:
                 insights.misplays_by_turn[turn] = insights.misplays_by_turn.get(turn, 0) + 1
     insights.misplays_by_result = {k: (v[0], v[1]) for k, v in misplays_by_result.items()}
