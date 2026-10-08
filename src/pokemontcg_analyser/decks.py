@@ -35,3 +35,12 @@ def diff(old: str, new: str) -> list[tuple[int, str]]:
         if after.get(card, 0) != before.get(card, 0)
     ]
     return sorted(changes, key=lambda change: (change[0] < 0, change[1]))
+
+
+# The set code and collector number Pokémon TCG Live appends: "TWM 130".
+_PRINTING = re.compile(r"\s+[A-Z][A-Za-z0-9-]{1,5}\s+\d+[a-z]?$")
+
+
+def card_names(decklist: str) -> list[str]:
+    """Just the names in a list, without set codes: "Dragapult ex"."""
+    return list(dict.fromkeys(_PRINTING.sub("", card) for card in parse(decklist)))

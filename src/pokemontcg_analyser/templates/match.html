@@ -132,6 +132,7 @@
             <button type="button" class="secondary" id="voice-button" title="Record a spoken note at the current time (V)">&#127897; Voice note</button>
             <button type="button" class="secondary" id="start-button" title="The game itself starts at the current time (G)">Game starts here</button>
             <button type="button" class="secondary" id="turn-button" title="Mark the start of a new turn (T)">New turn</button>
+            <button type="button" class="secondary" id="detect-button" title="Find the turn changes in the recording automatically">Detect turns</button>
           </div>
           <form class="composer-row" id="note-form">
             <input id="note-text" placeholder="Note at the current time (optional with a label)" autocomplete="off">
@@ -170,6 +171,7 @@
     let events = {{ events|tojson }};
     let turnOrder = {{ match.turn_order|tojson }};
     let gameStart = {{ match.game_start_seconds|tojson }};
+    const CAN_TRANSCRIBE = {{ can_transcribe|tojson }};
 
     const player = document.getElementById('player');
     const scrub = document.getElementById('scrub');
@@ -295,6 +297,18 @@
         });
         actions.appendChild(edit);
       }
+      if (CAN_TRANSCRIBE && event.audio_url && !event.detail && !event.transcribing) {
+        const write = el('button', '', 'Aa');
+        write.type = 'button';
+        write.title = 'Write out this spoken note';
+        write.addEventListener('click', async (ev) => {
+          ev.stopPropagation();
+          const updated = await api('POST', `/events/${event.id}/transcribe`);
+          if (!updated) return;
+          followTranscription({ ...updated, transcribing: true });
+        });
+        actions.appendChild(write);
+      }
       const remove = el('button', '', '×');
       remove.type = 'button';
       remove.title = 'Delete';
@@ -360,7 +374,7 @@
           const header = el('div', 'tl-turn');
           header.dataset.offset = event.offset_seconds;
           header.append(el('span', '', `Turn ${turn}`));
-          if (turnOrder) header.append(el('span', 'who', turnOwner(turn)));
+          if (turnOwner(turn, event)) header.append(el('span', 'who', turnOwner(turn, event)));
           header.append(el('span', '', formatTime(event.offset_seconds)), actionButtons(event));
           header.addEventListener('click', () => seekTo(event.offset_seconds));
           timeline.appendChild(header);
@@ -387,6 +401,7 @@
           body.appendChild(el('span', 'muted', 'Flagged while recording'));
         }
         if (event.audio_url) body.appendChild(voiceButton(event));
+        if (event.transcribing && !event.detail) body.appendChild(el('span', 'muted', 'writing it out…'));
         if (event.kind !== 'mark' && event.detail) {
           body.appendChild(el('span', '', event.detail));
         }
@@ -413,7 +428,7 @@
         if (event.kind === 'game_start') marker.classList.add('game-start');
         if (event.label) marker.classList.add(`label-${event.label}`);
         marker.style.left = percent(event.offset_seconds);
-        const what = event.kind === 'game_start' ? 'Game start' : event.kind === 'turn' ? `Turn ${turn}${turnOrder ? ' (' + turnOwner(turn) + ')' : ''}`
+        const what = event.kind === 'game_start' ? 'Game start' : event.kind === 'turn' ? `Turn ${turn}${turnOwner(turn, event) ? ' (' + turnOwner(turn, event) + ')' : ''}`
           : [LABELS[event.label], event.detail].filter(Boolean).join(': ') || 'Flagged while recording';
         marker.title = `${formatTime(event.offset_seconds)} — ${what}`;
         marker.addEventListener('click', () => seekTo(event.offset_seconds));
@@ -447,8 +462,11 @@
       return button;
     }
 
-    // Turns alternate, so who went first settles whose turn each one is.
-    function turnOwner(turn) {
+    // A detected turn knows whose it is. For hand-placed ones, turns
+    // alternate, so who went first settles it.
+    function turnOwner(turn, event) {
+      if (event.detail) return event.detail;
+      if (!turnOrder) return null;
       return (turn % 2 === 1) === (turnOrder === 'first') ? 'you' : 'opponent';
     }
 
@@ -596,13 +614,55 @@
         form.append('offset_seconds', offset);
         const resp = await fetch(`/matches/${matchId}/voice`, { method: 'POST', body: form });
         if (resp.ok) {
-          events.push(await resp.json());
+          const note = await resp.json();
+          events.push(note);
           render();
+          if (note.transcribing) followTranscription(note);
         } else {
           alert('Could not save the voice note.');
         }
       }
       resumeIfPaused();
+    }
+
+    // Spoken notes are written out in the background; keep asking until the
+    // text is there (the first one after starting the app loads the model).
+    function followTranscription(note) {
+      events = events.map((e) => (e.id === note.id ? note : e));
+      render();
+      let tries = 0;
+      const timer = setInterval(async () => {
+        tries += 1;
+        const resp = await fetch(`/events/${note.id}`);
+        const stillHere = events.some((e) => e.id === note.id);
+        if (!resp.ok || !stillHere || tries > 150) return clearInterval(timer);
+        const latest = await resp.json();
+        if (latest.transcribing) return;
+        clearInterval(timer);
+        events = events.map((e) => (e.id === latest.id ? latest : e));
+        if (editingId !== latest.id) render();
+      }, 2000);
+    }
+
+    async function detectTurns() {
+      const existing = events.filter((e) => e.kind === 'turn').length;
+      if (existing && !confirm(`Replace the ${existing} turn markers on this match with detected ones?`)) return;
+      const button = document.getElementById('detect-button');
+      button.disabled = true;
+      button.textContent = 'Detecting…';
+      const resp = await fetch(`/matches/${matchId}/detect-turns`, { method: 'POST' });
+      button.disabled = false;
+      button.textContent = 'Detect turns';
+      if (!resp.ok) {
+        const problem = await resp.json().catch(() => ({}));
+        alert(problem.detail || 'Could not detect turns.');
+        return;
+      }
+      const result = await resp.json();
+      events = result.events;
+      turnOrder = result.turn_order;
+      renderTurnOrder();
+      render();
     }
 
     const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 2, 3];
@@ -693,6 +753,11 @@
         startButton.blur();
         setGameStart(player.currentTime);
       });
+      const detectButton = document.getElementById('detect-button');
+      detectButton.addEventListener('click', () => {
+        detectButton.blur();
+        detectTurns();
+      });
       const turnButton = document.getElementById('turn-button');
       turnButton.addEventListener('click', () => {
         turnButton.blur();
@@ -742,5 +807,6 @@
 
     renderTurnOrder();
     render();
+    events.filter((e) => e.transcribing).forEach(followTranscription);
   </script>
 {% endblock %}

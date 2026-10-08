@@ -33,6 +33,12 @@ Early scaffold. Working today:
   and by going first or second, misplays per reviewed game and per turn, and
   every labelled moment across all matches with a link to that point in the
   video.
+- "Detect turns" on the review page finds the turn changes in a recording
+  from the ring around the playing field (its upper half lights up on the
+  opponent's turn, its lower half on yours), and fills in who went first.
+- Spoken notes are written out as text on this machine, using the card and
+  deck names you have saved as vocabulary. This needs the optional speech
+  model: `pip install -e ".[transcribe]"` (a few hundred MB on first use).
 - Decks page: save a decklist per deck with versions; matches count towards
   the version that was current when they were logged, so a change to the
   list shows up as a change in results.
@@ -40,9 +46,8 @@ Early scaffold. Working today:
   window instead of a browser tab, and install a double-clickable launcher
   in `~/Applications`.
 
-Not built yet: actual card recognition (matching video frames to specific
-cards) and automatic win/loss detection — both need real recorded footage to
-calibrate against.
+Not built yet: card recognition (matching video frames to specific cards)
+and automatic win/loss detection.
 
 ## Setup
 
@@ -100,6 +105,8 @@ src/pokemontcg_analyser/
   webapp.py     local review app (FastAPI + Jinja2 templates)
   insights.py   cross-match stats and labelled moments
   decks.py      decklist parsing and version diffs
+  turns.py      turn detection from the ring around the board
+  transcribe.py spoken notes to text (faster-whisper, optional)
   desktop.py    desktop-app window + macOS .app launcher
   templates/    review app HTML
   cli.py        command-line entry point

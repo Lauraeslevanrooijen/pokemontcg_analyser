@@ -4,7 +4,9 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from pokemontcg_analyser import recorder, storage, webapp
+import time
+
+from pokemontcg_analyser import recorder, storage, transcribe, turns, webapp
 
 
 @pytest.fixture()
@@ -16,6 +18,8 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
     monkeypatch.setattr(webapp, "RECORDINGS_DIR", tmp_path / "recordings")
     monkeypatch.setattr(webapp, "_recording", None)
     monkeypatch.setattr(recorder, "game_crop", lambda: None)
+    # No test should load the real speech model.
+    monkeypatch.setattr(transcribe, "available", lambda: False)
     monkeypatch.setattr(
         recorder,
         "screens_and_microphones",
@@ -447,3 +451,76 @@ def test_decks_page_shows_versions_with_their_records(client: TestClient) -> Non
     assert "+1</span> Iono PAL 185" in page
     assert "8 cards" in page
     assert client.post("/decks", data={"deck": " ", "decklist": "x"}).status_code == 400
+
+
+def test_voice_note_is_written_out_in_the_background(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    heard = []
+
+    def fake_transcribe(path: Path, vocabulary: list[str]) -> str:
+        heard.append((path.name, vocabulary))
+        return "ik had moeten terugtrekken"
+
+    monkeypatch.setattr(transcribe, "available", lambda: True)
+    monkeypatch.setattr(transcribe, "transcribe", fake_transcribe)
+    storage.add_deck_version("Pult", "4 Dragapult ex TWM 130\n3 Iono PAL 185")
+    match_id = storage.log_match(deck="Pult", result="win")
+
+    note = client.post(
+        f"/matches/{match_id}/voice",
+        files={"audio": ("note", b"opus", "audio/webm")},
+        data={"offset_seconds": "12"},
+    ).json()
+    assert note["transcribing"] is True
+
+    deadline = time.time() + 5
+    while client.get(f"/events/{note['id']}").json()["transcribing"]:
+        assert time.time() < deadline, "transcription never finished"
+        time.sleep(0.02)
+
+    done = client.get(f"/events/{note['id']}").json()
+    assert done["detail"] == "ik had moeten terugtrekken"
+    assert done["audio_url"] == note["audio_url"]
+    assert heard[0][1] == ["Pult", "Dragapult ex", "Iono"]
+
+
+def test_transcribe_needs_a_voice_note_and_the_speech_model(client: TestClient) -> None:
+    match_id = storage.log_match(deck="Pult", result="win")
+    typed = client.post(f"/matches/{match_id}/notes", json={"text": "typed"}).json()
+    spoken = client.post(
+        f"/matches/{match_id}/voice", files={"audio": ("note", b"opus", "audio/webm")}
+    ).json()
+
+    assert spoken["transcribing"] is False  # not installed in this test
+    assert client.post(f"/events/{typed['id']}/transcribe").status_code == 400
+    assert client.post(f"/events/{spoken['id']}/transcribe").status_code == 503
+
+
+def test_detect_turns_replaces_markers_and_fills_in_who_went_first(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    match_id = storage.log_match(deck="Pult", result="win", video_file="recordings/game.mp4")
+    storage.add_event(match_id, "turn", offset_seconds=5.0)
+    storage.add_note(match_id, "keep me", offset_seconds=50.0)
+    monkeypatch.setattr(
+        turns,
+        "detect_turns",
+        lambda path: [turns.Turn(63.0, "opponent"), turns.Turn(112.5, "you")],
+    )
+
+    resp = client.post(f"/matches/{match_id}/detect-turns")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["turn_order"] == "second"
+    assert [(e["kind"], e["offset_seconds"], e["detail"]) for e in body["events"]] == [
+        ("note", 50.0, "keep me"),
+        ("turn", 63.0, "opponent"),
+        ("turn", 112.5, "you"),
+    ]
+    assert storage.get_match(match_id).turn_order == "second"
+
+    monkeypatch.setattr(turns, "detect_turns", lambda path: [])
+    assert client.post(f"/matches/{match_id}/detect-turns").status_code == 422
+    assert len(storage.list_events(match_id)) == 3  # nothing was wiped

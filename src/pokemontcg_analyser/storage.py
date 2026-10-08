@@ -352,6 +352,32 @@ def update_note(
         )
 
 
+def set_event_detail(event_id: int, detail: str, db_path: Path | None = None) -> None:
+    """Set an event's text, leaving its kind and label alone."""
+    with connect(db_path) as conn:
+        conn.execute("UPDATE match_events SET detail = ? WHERE id = ?", (detail, event_id))
+
+
+def replace_turns(
+    match_id: int,
+    turns: list[tuple[float, str]],
+    db_path: Path | None = None,
+) -> None:
+    """Swap a match's turn markers for detected ones. Each is an offset and
+    whose turn it is ("you" or "opponent"), kept in the event's detail."""
+    with connect(db_path) as conn:
+        conn.execute(
+            "DELETE FROM match_events WHERE match_id = ? AND kind = 'turn'", (match_id,)
+        )
+        conn.executemany(
+            """
+            INSERT INTO match_events (match_id, video_offset_seconds, kind, detail)
+            VALUES (?, ?, 'turn', ?)
+            """,
+            [(match_id, offset, owner) for offset, owner in turns],
+        )
+
+
 def delete_event(event_id: int, db_path: Path | None = None) -> None:
     with connect(db_path) as conn:
         conn.execute("DELETE FROM match_events WHERE id = ?", (event_id,))

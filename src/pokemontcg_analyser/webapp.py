@@ -9,7 +9,9 @@ data/matches.db or source over HTTP.
 
 from __future__ import annotations
 
+import queue
 import subprocess
+import threading
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -20,7 +22,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 
-from . import decks, insights, recorder, storage
+from . import decks, insights, recorder, storage, transcribe, turns
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
 RECORDINGS_DIR = Path("recordings")
@@ -34,6 +36,54 @@ VOICE_EXTENSIONS = {"audio/webm": "webm", "audio/mp4": "m4a", "audio/ogg": "ogg"
 # The one recording in progress, if any. Screen capture is a single shared
 # resource and this app is a single local process, so module state is enough.
 _recording: recorder.Recording | None = None
+
+
+# Spoken notes waiting to be written out. One worker, so the speech model is
+# loaded once and notes are done in the order they were recorded.
+_transcriptions: queue.Queue[int] = queue.Queue()
+_transcribing: set[int] = set()
+_transcriber: threading.Thread | None = None
+
+
+def _transcription_vocabulary() -> list[str]:
+    """Card names from the saved decklists (newest list first), then the
+    deck names matches were logged under."""
+    names: list[str] = []
+    for version in reversed(storage.list_deck_versions(db_path=db_path())):
+        names += [version.deck, *decks.card_names(version.decklist)]
+    for match in storage.list_matches(db_path=db_path()):
+        names += [match.deck, match.opponent_deck or ""]
+    return list(dict.fromkeys(name for name in names if name))
+
+
+def _transcribe_worker() -> None:
+    while True:
+        event_id = _transcriptions.get()
+        try:
+            event = storage.get_event(event_id, db_path=db_path())
+            if event is None or not event.audio_file:
+                continue
+            text = transcribe.transcribe(
+                RECORDINGS_DIR / VOICE_DIRNAME / event.audio_file, _transcription_vocabulary()
+            )
+            # The note may have been typed over or deleted in the meantime.
+            event = storage.get_event(event_id, db_path=db_path())
+            if text and event is not None and not event.detail:
+                storage.set_event_detail(event_id, text, db_path=db_path())
+        except Exception:
+            # A failed transcription just leaves the note without text.
+            pass
+        finally:
+            _transcribing.discard(event_id)
+
+
+def queue_transcription(event_id: int) -> None:
+    global _transcriber
+    _transcribing.add(event_id)
+    _transcriptions.put(event_id)
+    if _transcriber is None or not _transcriber.is_alive():
+        _transcriber = threading.Thread(target=_transcribe_worker, daemon=True)
+        _transcriber.start()
 
 
 @asynccontextmanager
@@ -98,7 +148,8 @@ def matches_matching(
     note_text: dict[int, str] = {}
     if needle:
         for event in storage.list_all_events(db_path=db_path()):
-            if event.detail:
+            # A detected turn's detail is whose turn it is, not a note.
+            if event.detail and event.kind != "turn":
                 note_text[event.match_id] = note_text.get(event.match_id, "") + "\n" + event.detail
     found = []
     for m in matches:
@@ -351,6 +402,7 @@ def match_detail(request: Request, match_id: int):
             "video_version": video_version,
             "video_size": video_size,
             "retention_days": ORIGINALS_RETENTION_DAYS,
+            "can_transcribe": transcribe.available(),
         },
     )
 
@@ -363,6 +415,7 @@ def _event_json(event: storage.Event) -> dict:
         "detail": event.detail,
         "label": event.label,
         "audio_url": f"/media/{VOICE_DIRNAME}/{event.audio_file}" if event.audio_file else None,
+        "transcribing": event.id in _transcribing,
     }
 
 
@@ -509,7 +562,54 @@ async def add_voice_note(
         audio_file=filename,
         db_path=db_path(),
     )
+    if transcribe.available():
+        queue_transcription(event_id)
     return _event_json(_require_event(event_id))
+
+
+@app.get("/events/{event_id}")
+def get_event(event_id: int):
+    return _event_json(_require_event(event_id))
+
+
+@app.post("/events/{event_id}/transcribe")
+def transcribe_event(event_id: int):
+    """Write out a spoken note that has no text yet."""
+    event = _require_event(event_id)
+    if not event.audio_file:
+        raise HTTPException(status_code=400, detail="Not a voice note")
+    if not transcribe.available():
+        raise HTTPException(status_code=503, detail="Transcription is not installed")
+    if event_id not in _transcribing:
+        queue_transcription(event_id)
+    return _event_json(event)
+
+
+@app.post("/matches/{match_id}/detect-turns")
+def detect_turns(match_id: int):
+    """Find the turn changes in the recording and replace the match's turn
+    markers with them."""
+    match = _require_match(match_id)
+    if not match.video_file:
+        raise HTTPException(status_code=400, detail="Match has no recording")
+    video_path = RECORDINGS_DIR / Path(match.video_file).name
+    try:
+        found = turns.detect_turns(video_path)
+    except (OSError, RuntimeError) as exc:
+        raise HTTPException(status_code=500, detail=f"Could not read the recording: {exc}")
+    if not found:
+        raise HTTPException(status_code=422, detail="No turns found in this recording")
+    storage.replace_turns(
+        match_id, [(t.offset_seconds, t.owner) for t in found], db_path=db_path()
+    )
+    turn_order = match.turn_order
+    if turn_order is None:
+        turn_order = "first" if found[0].owner == "you" else "second"
+        storage.set_turn_order(match_id, turn_order, db_path=db_path())
+    return {
+        "events": [_event_json(e) for e in storage.list_events(match_id, db_path=db_path())],
+        "turn_order": turn_order,
+    }
 
 
 @app.post("/matches/{match_id}/turns")

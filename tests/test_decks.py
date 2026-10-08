@@ -53,3 +53,7 @@ def test_matches_count_towards_the_version_current_when_logged(tmp_path: Path) -
     versions = {m.id: m.deck_version_id for m in storage.list_matches(db_path=db)}
 
     assert versions == {before: None, with_v1: v1, with_v2: v2, other: None}
+
+
+def test_card_names_drops_set_code_and_number() -> None:
+    assert decks.card_names(V1) == ["Dragapult ex", "Fezandipiti ex", "Ultra Ball", "Iono"]
