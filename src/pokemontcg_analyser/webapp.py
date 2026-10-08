@@ -36,6 +36,9 @@ VOICE_EXTENSIONS = {"audio/webm": "webm", "audio/mp4": "m4a", "audio/ogg": "ogg"
 # The one recording in progress, if any. Screen capture is a single shared
 # resource and this app is a single local process, so module state is enough.
 _recording: recorder.Recording | None = None
+# Why the last attempt to start a recording failed, shown on the start page
+# until the next attempt: {"permission": bool, "detail": str}.
+_recording_problem: dict | None = None
 
 
 # Spoken notes waiting to be written out. One worker, so the speech model is
@@ -200,6 +203,7 @@ def index(
             },
             "total_size": format_size(total_size) if total_size else None,
             "recording": recording,
+            "recording_problem": _recording_problem,
             "marks": len(recorder.read_marks(recording.video_path)) if recording else 0,
             "devices": screens,
             "microphones": microphones,
@@ -317,7 +321,8 @@ def start_recording(
 ):
     """Devices are chosen by name and looked up again here, so the choice
     still means the same device if the indexes moved since the page loaded."""
-    global _recording
+    global _recording, _recording_problem
+    _recording_problem = None
     if active_recording() is not None:
         raise HTTPException(status_code=409, detail="Already recording")
     screens, microphones = capture_devices()
@@ -343,8 +348,21 @@ def start_recording(
             audio_name=audio_name,
             main_display=main_display,
         )
+    except recorder.ScreenRecordingPermissionError as exc:
+        _recording_problem = {"permission": True, "detail": str(exc)}
     except (RuntimeError, OSError) as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
+        _recording_problem = {"permission": False, "detail": str(exc)}
+    # Back to the start page either way; it shows what went wrong.
+    return RedirectResponse("/", status_code=303)
+
+
+@app.post("/recording/open-settings")
+def open_screen_recording_settings():
+    """Open the macOS settings pane where Screen Recording is allowed."""
+    subprocess.run(
+        ["open", "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"],
+        capture_output=True,
+    )
     return RedirectResponse("/", status_code=303)
 
 

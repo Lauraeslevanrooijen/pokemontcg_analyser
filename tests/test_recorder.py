@@ -186,3 +186,66 @@ def test_start_recording_uses_the_helper_for_the_main_display(tmp_path, monkeypa
     assert "--crop 0.00000,0.10000,1.00000,0.80000" in log
     assert "--microphone Desk Mic" in log
     assert recording.process.returncode == 0
+
+
+def _script(tmp_path, name: str, body: str):
+    path = tmp_path / name
+    path.write_text("#!/bin/sh\n" + body)
+    path.chmod(0o755)
+    return path
+
+
+def test_helper_without_permission_raises_instead_of_falling_back(tmp_path, monkeypatch) -> None:
+    helper = _script(tmp_path, "helper", 'echo "error: screen-recording-permission: not allowed" >&2\nexit 1\n')
+    monkeypatch.setattr(recorder, "capture_helper_path", lambda: helper)
+    monkeypatch.setattr(recorder, "require_ffmpeg", lambda: (_ for _ in ()).throw(AssertionError("ffmpeg used")))
+    out = tmp_path / "out"
+
+    try:
+        recorder.start_recording(3, out, main_display=True)
+    except recorder.ScreenRecordingPermissionError:
+        pass
+    else:
+        raise AssertionError("expected ScreenRecordingPermissionError")
+    assert list(out.iterdir()) == []  # nothing left behind
+
+
+def test_ffmpeg_that_never_writes_is_called_off(tmp_path, monkeypatch) -> None:
+    # like ffmpeg waiting on a screen it may not record: alive, silent, deaf
+    stuck = _script(tmp_path, "ffmpeg", "trap '' TERM\nwhile true; do sleep 1; done\n")
+    monkeypatch.setattr(recorder, "require_ffmpeg", lambda: str(stuck))
+    monkeypatch.setattr(recorder.time, "monotonic", _fast_clock())
+    out = tmp_path / "out"
+
+    try:
+        recorder.start_recording(3, out)
+    except recorder.ScreenRecordingPermissionError:
+        pass
+    else:
+        raise AssertionError("expected ScreenRecordingPermissionError")
+    assert list(out.iterdir()) == []
+
+
+def _fast_clock():
+    """A clock that jumps ahead two seconds per look, to skip the waiting."""
+    now = [0.0]
+
+    def monotonic() -> float:
+        now[0] += 2.0
+        return now[0]
+
+    return monotonic
+
+
+def test_stop_twice_and_with_a_deaf_process(tmp_path) -> None:
+    import subprocess
+    from datetime import datetime, timezone
+
+    stuck = _script(tmp_path, "stuck", "trap '' TERM\nwhile true; do sleep 1; done\n")
+    process = subprocess.Popen([str(stuck)], stdin=subprocess.PIPE)
+    recording = recorder.Recording(tmp_path / "x.mp4", tmp_path / "x.log", datetime.now(timezone.utc), process)
+
+    recording.stop(timeout=0.2)  # ignores q and SIGTERM; gets killed
+    recording.stop(timeout=0.2)  # nothing left to do, and no error
+
+    assert not recording.is_running

@@ -13,8 +13,9 @@ import json
 import os
 import shutil
 import subprocess
+import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -24,6 +25,16 @@ class FfmpegNotFoundError(RuntimeError):
         super().__init__(
             "ffmpeg was not found on PATH. Install it with `brew install ffmpeg`."
         )
+
+
+class ScreenRecordingPermissionError(RuntimeError):
+    """macOS has not allowed the app that launched this process to record
+    the screen. The permission belongs to that app (the desktop app, or the
+    terminal), is granted in System Settings, and only takes effect after
+    the app is restarted."""
+
+    def __init__(self) -> None:
+        super().__init__("macOS has not allowed this app to record the screen.")
 
 
 def require_ffmpeg() -> str:
@@ -330,6 +341,7 @@ class Recording:
     log_path: Path
     started_at: datetime
     process: subprocess.Popen
+    _stop_lock: threading.Lock = field(default_factory=threading.Lock, repr=False, compare=False)
 
     @property
     def is_running(self) -> bool:
@@ -347,17 +359,30 @@ class Recording:
             return ""
 
     def stop(self, timeout: float = 15.0) -> Path:
-        """Ask ffmpeg to finish and wait for it to finalize the file."""
-        if self.is_running:
-            try:
-                # Same as pressing q in the terminal: ffmpeg stops reading
-                # input and writes the MP4 index. Killing it instead would
-                # leave a file no player can open.
-                self.process.communicate(b"q", timeout=timeout)
-            except subprocess.TimeoutExpired:
-                self.process.terminate()
-                self.process.wait()
+        """Ask the recorder to finish and wait for it to finalize the file."""
+        # One at a time: a second click on Stop while the first is still
+        # finishing the file waits here and then finds nothing left to do.
+        with self._stop_lock:
+            if self.is_running:
+                try:
+                    # Same as pressing q in the terminal: the recorder stops
+                    # and writes the MP4 index. Killing it instead would
+                    # leave a file no player can open.
+                    self.process.communicate(b"q", timeout=timeout)
+                except (subprocess.TimeoutExpired, ValueError, OSError):
+                    # Not listening (or its stdin is already closed). A
+                    # recorder stuck opening the screen ignores a polite
+                    # request too, so don't wait on that forever either.
+                    self._force_quit()
         return self.video_path
+
+    def _force_quit(self) -> None:
+        self.process.terminate()
+        try:
+            self.process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            self.process.kill()
+            self.process.wait()
 
 
 CAPTURE_SOURCE = Path(__file__).parent / "capture" / "main.swift"
@@ -451,6 +476,11 @@ def start_recording(
             recording.process.kill()
             recording.process.wait()
         video_path.unlink(missing_ok=True)
+        if "screen-recording-permission" in recording.log_tail():
+            # ffmpeg would get nothing from the screen either (it hangs
+            # instead of failing), so there is no point falling back to it.
+            _discard(video_path)
+            raise ScreenRecordingPermissionError()
         with log_path.open("ab") as log:
             log.write(b"\n-- the ScreenCaptureKit recorder did not start; using ffmpeg --\n")
 
@@ -461,14 +491,27 @@ def start_recording(
     cmd[1:1] = ["-hide_banner", "-nostats"]
     recording = Recording(video_path, log_path, started_at, _launch(cmd, log_path, "ab"))
 
-    deadline = time.monotonic() + 1.5
+    # ffmpeg creates the file as soon as the screen delivers its first frame.
+    # Without Screen Recording permission that never happens and ffmpeg
+    # just sits there, so a recording that isn't writing is called off.
+    deadline = time.monotonic() + 8
     while time.monotonic() < deadline:
         if not recording.is_running:
-            raise RuntimeError(
-                f"ffmpeg exited immediately:\n{recording.log_tail()}"
-            )
+            problem = recording.log_tail()
+            _discard(video_path)
+            raise RuntimeError(f"ffmpeg exited immediately:\n{problem}")
+        if time.monotonic() - (deadline - 8) > 1.5 and video_path.exists():
+            return recording
         time.sleep(0.1)
-    return recording
+    recording._force_quit()
+    _discard(video_path)
+    raise ScreenRecordingPermissionError()
+
+
+def _discard(video_path: Path) -> None:
+    """Remove what a recording that never got going left behind."""
+    for path in (video_path, video_path.with_suffix(".json"), video_path.with_suffix(".log")):
+        path.unlink(missing_ok=True)
 
 
 ORIGINALS_DIRNAME = "originals"

@@ -240,7 +240,17 @@ final class Recorder: NSObject, SCStreamOutput, SCStreamDelegate {
     }
 }
 
-let recorder = Recorder(options: parseOptions())
+let options = parseOptions()
+
+// Without Screen Recording permission nothing can be captured. Asking here
+// makes macOS show its prompt and list the app under Privacy & Security;
+// the marker at the start of the message is what the app looks for.
+if !CGPreflightScreenCaptureAccess() {
+    CGRequestScreenCaptureAccess()
+    fail("screen-recording-permission: macOS has not allowed this app to record the screen")
+}
+
+let recorder = Recorder(options: options)
 
 // Ctrl+C and termination finish the file rather than cutting it off.
 var signalSources: [DispatchSourceSignal] = []
@@ -263,7 +273,9 @@ Task {
     do {
         try await recorder.run()
     } catch {
-        fail("could not start capture (is Screen Recording allowed for this app?): \(error.localizedDescription)")
+        let reason = error.localizedDescription
+        if reason.contains("TCC") { fail("screen-recording-permission: \(reason)") }
+        fail("could not start capture: \(reason)")
     }
 }
 dispatchMain()

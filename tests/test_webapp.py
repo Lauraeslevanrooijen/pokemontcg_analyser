@@ -17,6 +17,7 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
     monkeypatch.setattr(storage, "DEFAULT_DB_PATH", tmp_path / "matches.db")
     monkeypatch.setattr(webapp, "RECORDINGS_DIR", tmp_path / "recordings")
     monkeypatch.setattr(webapp, "_recording", None)
+    monkeypatch.setattr(webapp, "_recording_problem", None)
     monkeypatch.setattr(recorder, "game_crop", lambda: None)
     # No test should load the real speech model.
     monkeypatch.setattr(transcribe, "available", lambda: False)
@@ -549,3 +550,39 @@ def test_card_image_is_served_from_the_local_cache(
     assert client.get("/cards/image/TWM/999").status_code == 404
     assert client.get("/cards/image/TW.M/130").status_code == 404
     assert asked == [("TWM", "130"), ("TWM", "999")]
+
+
+def test_start_without_screen_recording_permission_explains_what_to_do(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def denied(*args, **options):
+        raise recorder.ScreenRecordingPermissionError()
+
+    monkeypatch.setattr(recorder, "start_recording", denied)
+
+    resp = client.post("/recording/start", follow_redirects=False)
+
+    assert resp.status_code == 303  # not a bare error page
+    page = client.get("/").text
+    assert "has not allowed this app to record the screen" in page
+    assert "Open Screen Recording settings" in page
+    assert "Start recording" in page  # and it can be tried again
+
+    monkeypatch.setattr(
+        recorder, "start_recording", lambda *a, **o: _FakeRecording(Path("recordings/x.mp4"))
+    )
+    client.post("/recording/start", follow_redirects=False)
+    client.post("/recording/stop", follow_redirects=False)
+    assert "has not allowed this app" not in client.get("/").text
+
+
+def test_other_start_failures_show_the_reason(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def broken(*args, **options):
+        raise RuntimeError("ffmpeg exited immediately:\nno such device")
+
+    monkeypatch.setattr(recorder, "start_recording", broken)
+    client.post("/recording/start", follow_redirects=False)
+
+    assert "no such device" in client.get("/").text
