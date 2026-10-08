@@ -18,6 +18,8 @@ _WENT = re.compile(r"^(.+?) decided to go (first|second)\.$")
 _WINS = re.compile(r"([^.]+?) wins\.\s*$")
 _SETUP_ACTOR = re.compile(r"^(.+?) (?:chose|won the coin toss|decided to go|drew \d+ cards)\b")
 # Where a Pokémon is named in an action, to list what the opponent played.
+_PRIZES = re.compile(r"^(.+?) took (a|\d+) Prize cards?\.")
+_ATTACK = re.compile(r"^(.+?)'s (.+?) used .+? on .+? for \d+ damage")
 _POKEMON = [
     re.compile(r"played (.+?) to the (?:Active Spot|Bench)"),
     re.compile(r"evolved .+? to (.+?) (?:on the Bench|in the Active Spot)"),
@@ -77,6 +79,62 @@ class BattleLog:
                     found.append(hit.group(1))
         return found
 
+    def opening_hand(self) -> list[str]:
+        """The cards I started with. After a mulligan the log has several
+        opening hands; the last one is the hand that was kept."""
+        hand: list[str] = []
+        for action in self.setup:
+            drew = _OPENING_HAND.match(action.text)
+            if drew and drew.group(1) == self.me:
+                for detail in action.details:
+                    if ": " in detail:
+                        hand = [card.strip() for card in detail.split(": ", 1)[1].split(",")]
+        return hand
+
+    def prize_race(self) -> list[dict]:
+        """Per turn, how many Prize cards each side has taken so far."""
+        mine = theirs = 0
+        race = []
+        for number, turn in enumerate(self.turns, start=1):
+            for action in turn.actions:
+                took = _PRIZES.match(action.text)
+                if not took:
+                    continue
+                count = 1 if took.group(2) == "a" else int(took.group(2))
+                if took.group(1) == self.me:
+                    mine += count
+                else:
+                    theirs += count
+            race.append(
+                {
+                    "turn": number,
+                    "owner": "you" if turn.player == self.me else "opponent",
+                    "you": mine,
+                    "opponent": theirs,
+                }
+            )
+        return race
+
+    def deck_name(self, player: str | None) -> str | None:
+        """A name for a player's deck from what it did: the Pokémon that
+        attacked most, plus a second one if it did a real share of the
+        attacking, or else the first two that were played. Alphabetical, and
+        without one-off attackers, so the same deck tends to get the same
+        name from one game to the next."""
+        if not player:
+            return None
+        attacks: dict[str, int] = {}
+        for turn in self.turns:
+            for action in turn.actions:
+                hit = _ATTACK.match(action.text)
+                if hit and hit.group(1) == player:
+                    attacks[hit.group(2)] = attacks.get(hit.group(2), 0) + 1
+        ranked = sorted(attacks, key=lambda name: (-attacks[name], name))
+        main = ranked[:1]
+        if len(ranked) > 1 and attacks[ranked[1]] >= max(2, attacks[ranked[0]] / 3):
+            main.append(ranked[1])
+        return " / ".join(sorted(main or self.pokemon_of(player)[:2])) or None
+
     def narrated(self, turn: LogTurn) -> list[Action]:
         """A turn's actions worded for reading beside the video: the turn
         owner's name dropped from the front, the players called you and
@@ -104,6 +162,7 @@ def parse(text: str) -> BattleLog:
     log = BattleLog()
     actions = log.setup
     last: Action | None = None
+    itemised = False  # whether the detail being read already has its items
     for raw in text.replace("’", "'").splitlines():
         line = raw.strip()
         if not line or line == "Setup":
@@ -117,14 +176,19 @@ def parse(text: str) -> BattleLog:
             actions, last = log.turns[-1].actions, None
             continue
         if line.startswith("•"):
-            # the cards an indented "- 7 drawn cards." line is about
+            # what an indented "- 7 drawn cards." line is about; a detail
+            # can have several of these lines
             if last is not None:
-                cards = line.lstrip("• ").strip()
-                if last.details:
-                    last.details[-1] = f"{last.details[-1].rstrip('.')}: {cards}"
+                items = line.lstrip("• ").strip()
+                if not last.details:
+                    last.details.append(items)
+                elif itemised:
+                    last.details[-1] = f"{last.details[-1]}, {items}"
                 else:
-                    last.details.append(cards)
+                    last.details[-1] = f"{last.details[-1].rstrip('.:')}: {items}"
+                itemised = True
             continue
+        itemised = False
         if line.startswith("- "):
             if last is not None:
                 last.details.append(line[2:].strip())

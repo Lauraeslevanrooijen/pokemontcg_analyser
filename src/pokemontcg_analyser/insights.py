@@ -118,3 +118,55 @@ def build(matches: list[Match], events: list[Event]) -> Insights:
     insights.misplays_by_result = {k: (v[0], v[1]) for k, v in misplays_by_result.items()}
     insights.misplays_by_turn = dict(sorted(insights.misplays_by_turn.items()))
     return insights
+
+
+@dataclass
+class Openings:
+    """What opening hands looked like across the matches with a battle log."""
+
+    games: int = 0
+    # card name -> record of the games it was in the opening hand
+    by_card: dict[str, Record] = field(default_factory=dict)
+    # a property of the hand ("A Supporter") -> record with it / without it
+    by_feature: dict[str, tuple[Record, Record]] = field(default_factory=dict)
+    # kind of card ("Basic Pokémon") -> average number in the opening hand
+    average: dict[str, float] = field(default_factory=dict)
+    typed_games: int = 0  # games where the kinds of the cards were known
+
+
+# name, and how it reads off the number of each kind of card in a hand
+HAND_FEATURES = [
+    ("A Supporter in hand", lambda kinds: kinds.get("Supporter", 0) >= 1),
+    ("Only one Basic Pokémon", lambda kinds: kinds.get("Basic Pokémon", 0) == 1),
+    ("Two or more Energy", lambda kinds: kinds.get("Energy", 0) >= 2),
+]
+
+
+def openings(hands: list[tuple[str, list[str], dict[str, str]]]) -> Openings:
+    """`hands` is one entry per match with a battle log: its result, the
+    cards in the opening hand, and what kind each of those cards is (empty
+    when the deck's list isn't saved, so kinds are unknown)."""
+    found = Openings(games=len(hands))
+    totals: dict[str, int] = defaultdict(int)
+    features = {name: (Record(), Record()) for name, _ in HAND_FEATURES}
+    for result, hand, kinds in hands:
+        for card in dict.fromkeys(hand):
+            found.by_card.setdefault(card, Record()).add(result)
+        # Only hands where every card's kind is known say anything about
+        # "no Supporter" and the like.
+        if not hand or any(card not in kinds for card in hand):
+            continue
+        found.typed_games += 1
+        counts: dict[str, int] = defaultdict(int)
+        for card in hand:
+            counts[kinds[card]] += 1
+            totals[kinds[card]] += 1
+        for name, test in HAND_FEATURES:
+            features[name][0 if test(counts) else 1].add(result)
+    if found.typed_games:
+        found.average = {kind: totals[kind] / found.typed_games for kind in sorted(totals)}
+        found.by_feature = features
+    found.by_card = dict(
+        sorted(found.by_card.items(), key=lambda item: (-item[1].total, item[0]))
+    )
+    return found

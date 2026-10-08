@@ -92,6 +92,23 @@
       background: transparent; color: var(--muted); border: none; padding: 2px 6px; font-weight: 400;
     }
     .tl-actions button:hover { color: var(--text); filter: none; }
+    :root { --series-you: #3987e5; --series-opponent: #d95926; }
+    .hand { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 8px; margin: 8px 0 16px; max-width: 760px; }
+    .hand-card { position: relative; aspect-ratio: 245 / 337; border-radius: 5px; overflow: hidden; background: var(--bg); border: 1px solid var(--border); }
+    .hand-card img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+    .hand-card span { position: absolute; inset: 0; padding: 6px; font-size: 0.75em; overflow-wrap: anywhere; }
+    .race { position: relative; margin-top: 4px; }
+    .race svg { display: block; width: 100%; height: auto; overflow: visible; }
+    .race text { fill: var(--muted); font-size: 11px; }
+    .race .end-label { fill: var(--text); font-size: 12px; font-weight: 600; }
+    .race-legend { display: flex; gap: 16px; font-size: 0.85em; margin-top: 4px; }
+    .race-legend i { display: inline-block; width: 14px; height: 2px; vertical-align: middle; margin-right: 6px; }
+    .race-tip {
+      position: absolute; pointer-events: none; background: var(--bg); border: 1px solid var(--border);
+      border-radius: 6px; padding: 6px 10px; font-size: 0.85em; white-space: nowrap; transform: translate(-50%, -100%);
+    }
+    .race-tip b { font-variant-numeric: tabular-nums; }
+    .race-tip i { display: inline-block; width: 12px; height: 2px; vertical-align: middle; margin-right: 6px; }
     .tl-log { margin: 2px 0 6px 8px; font-size: 0.85em; }
     .tl-log summary { color: var(--muted); font-size: 0.9em; padding: 2px 0; }
     .tl-log ol { margin: 4px 0 0; padding-left: 20px; }
@@ -104,7 +121,7 @@
 
   <p><a href="/" class="muted">&larr; All matches</a></p>
   <h1>
-    {{ match.deck }} vs {{ match.opponent_deck or '?' }}
+    {{ match.deck }} vs <span id="opponent-name">{{ match.opponent_deck or '?' }}</span>
     <span class="badge badge-{{ match.result }}" id="result-badge">{{ match.result }}</span>
   </h1>
   <p class="turn-order">
@@ -162,6 +179,28 @@
       {% else %}
         <p class="muted">No recording attached to this match.</p>
       {% endif %}
+
+      <div class="panel" id="log-summary" style="margin-top: 16px;" hidden>
+        <div id="opening-hand-block">
+          <strong>Opening hand</strong>
+          <div class="hand" id="opening-hand"></div>
+        </div>
+        <div id="prize-race-block">
+          <strong>Prize cards taken</strong>
+          <div class="race-legend muted">
+            <span><i style="background: var(--series-you);"></i>You</span>
+            <span><i style="background: var(--series-opponent);"></i>Opponent</span>
+          </div>
+          <div class="race" id="prize-race"></div>
+          <details>
+            <summary class="muted" style="font-size: 0.85em;">As a table</summary>
+            <table id="prize-table" style="font-size: 0.9em;">
+              <thead><tr><th>Turn</th><th>Whose</th><th class="num">You</th><th class="num">Opponent</th></tr></thead>
+              <tbody></tbody>
+            </table>
+          </details>
+        </div>
+      </div>
     </div>
 
     <aside class="panel timeline" id="timeline-panel">
@@ -544,6 +583,10 @@
       badge.textContent = saved.result;
       badge.className = `badge badge-${saved.result}`;
       document.getElementById('battle-log-panel').open = false;
+      if (saved.opponent_deck) {
+        document.getElementById('opponent-name').textContent = saved.opponent_deck;
+      }
+      renderLogSummary();
       renderOpponentPokemon();
       renderTurnOrder();
       render();
@@ -573,6 +616,121 @@
       const shown = battleLog ? battleLog.opponent_pokemon : [];
       line.hidden = !shown.length;
       line.textContent = shown.length ? `Opponent played: ${shown.join(', ')}` : '';
+    }
+
+    const SVG_NS = 'http://www.w3.org/2000/svg';
+    function svg(tag, attrs) {
+      const node = document.createElementNS(SVG_NS, tag);
+      for (const [key, value] of Object.entries(attrs)) node.setAttribute(key, value);
+      return node;
+    }
+
+    // From the battle log: the hand the game started with, and how the
+    // Prize cards went turn by turn (a step line per side; taking the last
+    // one is how a game is won).
+    function renderLogSummary() {
+      const panel = document.getElementById('log-summary');
+      const hand = battleLog ? battleLog.opening_hand : [];
+      const race = battleLog ? battleLog.prize_race : [];
+      panel.hidden = !hand.length && !race.length;
+      document.getElementById('opening-hand-block').hidden = !hand.length;
+      document.getElementById('prize-race-block').hidden = !race.length;
+
+      const handBox = document.getElementById('opening-hand');
+      handBox.replaceChildren();
+      for (const card of hand) {
+        const tile = el('div', 'hand-card');
+        tile.title = card.name;
+        tile.appendChild(el('span', 'muted', card.name));
+        if (card.image) {
+          const img = document.createElement('img');
+          img.src = card.image;
+          img.alt = card.name;
+          img.loading = 'lazy';
+          img.addEventListener('error', () => img.remove());
+          tile.appendChild(img);
+        }
+        handBox.appendChild(tile);
+      }
+
+      const box = document.getElementById('prize-race');
+      box.replaceChildren();
+      const rows = document.querySelector('#prize-table tbody');
+      rows.replaceChildren();
+      if (!race.length) return;
+      for (const point of race) {
+        const row = el('tr');
+        row.append(el('td', '', `Turn ${point.turn}`), el('td', 'muted', point.owner),
+          el('td', 'num', point.you), el('td', 'num', point.opponent));
+        rows.appendChild(row);
+      }
+
+      const W = 720, H = 190, left = 26, right = 96, top = 12, bottom = 26;
+      const top_y = Math.max(6, ...race.map((p) => Math.max(p.you, p.opponent)));
+      const x = (turn) => left + (race.length === 1 ? 0 : (turn - 1) / (race.length - 1)) * (W - left - right);
+      const y = (prizes) => top + (1 - prizes / top_y) * (H - top - bottom);
+      const chart = svg('svg', { viewBox: `0 0 ${W} ${H}`, role: 'img' });
+      chart.setAttribute('aria-label', 'Prize cards taken by each player after each turn');
+      for (let prizes = 0; prizes <= top_y; prizes += 2) {
+        chart.appendChild(svg('line', { x1: left, x2: W - right, y1: y(prizes), y2: y(prizes), stroke: 'var(--border)', 'stroke-width': 1 }));
+        const label = svg('text', { x: left - 8, y: y(prizes) + 4, 'text-anchor': 'end' });
+        label.textContent = prizes;
+        chart.appendChild(label);
+      }
+      const every = Math.ceil(race.length / 12);
+      for (const point of race) {
+        if ((point.turn - 1) % every) continue;
+        const label = svg('text', { x: x(point.turn), y: H - 8, 'text-anchor': 'middle' });
+        label.textContent = point.turn;
+        chart.appendChild(label);
+      }
+      const last = race[race.length - 1];
+      const series = [['you', 'var(--series-you)', 'You'], ['opponent', 'var(--series-opponent)', 'Opponent']];
+      for (const [key, color] of series) {
+        // steps: the count holds until the turn in which a prize is taken
+        let path = `M ${x(1)} ${y(0)} V ${y(race[0][key])}`;
+        for (const point of race.slice(1)) path += ` H ${x(point.turn)} V ${y(point[key])}`;
+        chart.appendChild(svg('path', { d: path, fill: 'none', stroke: color, 'stroke-width': 2, 'stroke-linejoin': 'round', 'stroke-linecap': 'round' }));
+      }
+      // end markers and labels; nudged apart when both sides ended level
+      const level = last.you === last.opponent;
+      for (const [key, color, name] of series) {
+        const shift = level ? (key === 'you' ? -8 : 8) : 0;
+        chart.appendChild(svg('circle', { cx: x(last.turn), cy: y(last[key]), r: 4, fill: color, stroke: 'var(--panel)', 'stroke-width': 2 }));
+        const label = svg('text', { x: x(last.turn) + 10, y: y(last[key]) + 4 + shift, class: 'end-label' });
+        label.textContent = `${name} ${last[key]}`;
+        chart.appendChild(label);
+      }
+      const hair = svg('line', { y1: top, y2: H - bottom, stroke: 'var(--muted)', 'stroke-width': 1, visibility: 'hidden' });
+      chart.appendChild(hair);
+      const tip = el('div', 'race-tip');
+      tip.hidden = true;
+      box.append(chart, tip);
+
+      // hover anywhere over the plot: the nearest turn, both sides at once
+      chart.addEventListener('pointermove', (ev) => {
+        const bounds = chart.getBoundingClientRect();
+        const at = ((ev.clientX - bounds.left) / bounds.width) * W;
+        const point = race.reduce((best, p) => (Math.abs(x(p.turn) - at) < Math.abs(x(best.turn) - at) ? p : best));
+        hair.setAttribute('x1', x(point.turn));
+        hair.setAttribute('x2', x(point.turn));
+        hair.setAttribute('visibility', 'visible');
+        tip.replaceChildren(el('div', 'muted', `Turn ${point.turn} · ${point.owner}`));
+        for (const [key, color, name] of series) {
+          const line = el('div');
+          const swatch = el('i');
+          swatch.style.background = color;
+          line.append(swatch, el('b', '', point[key]), document.createTextNode(` ${name}`));
+          tip.appendChild(line);
+        }
+        tip.hidden = false;
+        tip.style.left = `${(x(point.turn) / W) * bounds.width}px`;
+        tip.style.top = `${(top / H) * bounds.height}px`;
+      });
+      chart.addEventListener('pointerleave', () => {
+        hair.setAttribute('visibility', 'hidden');
+        tip.hidden = true;
+      });
     }
 
     function renderTurnOrder() {
@@ -894,6 +1052,7 @@
       });
     }
 
+    renderLogSummary();
     renderOpponentPokemon();
     renderTurnOrder();
     render();

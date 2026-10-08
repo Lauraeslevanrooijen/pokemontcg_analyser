@@ -227,10 +227,22 @@ def index(
 def stats(request: Request):
     matches = storage.list_matches(db_path=db_path())
     events = storage.list_all_events(db_path=db_path())
+    hands = []
+    for match in matches:
+        if not match.battle_log:
+            continue
+        log = battlelog.parse(match.battle_log)
+        hand = log.opening_hand()
+        if hand:
+            hands.append((match.result, hand, _card_kinds(_deck_cards(match))))
     return templates.TemplateResponse(
         request,
         "stats.html",
-        {"stats": insights.build(matches, events), "labels": storage.LABELS},
+        {
+            "stats": insights.build(matches, events),
+            "labels": storage.LABELS,
+            "openings": insights.openings(hands),
+        },
     )
 
 
@@ -424,9 +436,7 @@ def create_match(
         db_path=db_path(),
     )
     if log is not None:
-        storage.set_battle_log(match_id, battle_log.strip(), db_path=db_path())
-        if log.turn_order:
-            storage.set_turn_order(match_id, log.turn_order, db_path=db_path())
+        _apply_battle_log(match_id, battle_log.strip(), log)
     if video_path:
         storage.add_events(
             match_id,
@@ -466,16 +476,73 @@ def match_detail(request: Request, match_id: int):
             "video_size": video_size,
             "retention_days": ORIGINALS_RETENTION_DAYS,
             "can_transcribe": transcribe.available(),
-            "battle_log": _battle_log_json(match.battle_log),
+            "battle_log": _battle_log_json(match.battle_log, match),
         },
     )
 
 
-def _battle_log_json(text: str | None) -> dict | None:
+def _deck_cards(match: storage.Match) -> dict[str, decks.ListedCard]:
+    """The cards of the list a match was played with, by name. Falls back
+    to the deck's newest list for matches logged before one was saved."""
+    versions = [v for v in storage.list_deck_versions(db_path=db_path()) if v.deck == match.deck]
+    version = next((v for v in versions if v.id == match.deck_version_id), None)
+    version = version or (versions[-1] if versions else None)
+    if version is None:
+        return {}
+    return {
+        card.name: card
+        for section in decks.sections(version.decklist)
+        for card in section.cards
+    }
+
+
+def _card_kinds(listed: dict[str, decks.ListedCard]) -> dict[str, str]:
+    """What kind each listed card is, from the card database."""
+    kinds = {}
+    for name, card in listed.items():
+        found = cards.lookup(card.set_code, card.number) if card.printing else None
+        if found is not None and found.kind:
+            kinds[name] = found.kind
+    return kinds
+
+
+def _opponent_deck_name(log: battlelog.BattleLog, match_id: int) -> str | None:
+    """A name for the opponent's deck. If an earlier match against the same
+    Pokémon was given a name by hand, that name is used again, so the
+    matchup stats keep counting it as one deck."""
+    suggested = log.deck_name(log.opponent)
+    if suggested is None:
+        return None
+    for other in storage.list_matches(db_path=db_path()):
+        if other.id == match_id or not other.battle_log or not other.opponent_deck:
+            continue
+        earlier = battlelog.parse(other.battle_log)
+        if earlier.deck_name(earlier.opponent) == suggested:
+            return other.opponent_deck
+    return suggested
+
+
+def _apply_battle_log(match_id: int, text: str, log: battlelog.BattleLog) -> None:
+    """Store a log and take from it what it settles: who went first, the
+    result, and a name for the opponent's deck if none was given."""
+    storage.set_battle_log(match_id, text, db_path=db_path())
+    if log.turn_order:
+        storage.set_turn_order(match_id, log.turn_order, db_path=db_path())
+    if log.result:
+        storage.set_result(match_id, log.result, db_path=db_path())
+    match = storage.get_match(match_id, db_path=db_path())
+    if match is not None and not match.opponent_deck:
+        name = _opponent_deck_name(log, match_id)
+        if name:
+            storage.set_opponent_deck(match_id, name, db_path=db_path())
+
+
+def _battle_log_json(text: str | None, match: storage.Match | None = None) -> dict | None:
     """A stored battle log, parsed and worded for the timeline."""
     if not text:
         return None
     log = battlelog.parse(text)
+    listed = _deck_cards(match) if match is not None else {}
 
     def actions(items: list[battlelog.Action]) -> list[dict]:
         return [{"text": a.text, "details": a.details} for a in items]
@@ -490,6 +557,18 @@ def _battle_log_json(text: str | None) -> dict | None:
             for turn in log.turns
         ],
         "opponent_pokemon": log.pokemon_of(log.opponent),
+        "prize_race": log.prize_race(),
+        "opening_hand": [
+            {
+                "name": name,
+                "image": (
+                    f"/cards/image/{listed[name].set_code}/{listed[name].number}"
+                    if name in listed and listed[name].printing
+                    else None
+                ),
+            }
+            for name in log.opening_hand()
+        ],
     }
 
 
@@ -549,15 +628,13 @@ def set_battle_log(match_id: int, body: BattleLogIn):
         raise HTTPException(
             status_code=400, detail="This doesn't look like a battle log: no turns found in it"
         )
-    storage.set_battle_log(match_id, text, db_path=db_path())
-    if log.turn_order:
-        storage.set_turn_order(match_id, log.turn_order, db_path=db_path())
-    if log.result:
-        storage.set_result(match_id, log.result, db_path=db_path())
+    _apply_battle_log(match_id, text, log)
+    updated = _require_match(match_id)
     return {
-        "battle_log": _battle_log_json(text),
-        "turn_order": log.turn_order or match.turn_order,
-        "result": log.result or match.result,
+        "battle_log": _battle_log_json(text, updated),
+        "turn_order": updated.turn_order,
+        "result": updated.result,
+        "opponent_deck": updated.opponent_deck,
         "result_changed": bool(log.result and log.result != match.result),
     }
 

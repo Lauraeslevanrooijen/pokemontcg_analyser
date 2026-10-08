@@ -62,3 +62,62 @@ def test_text_that_is_not_a_log() -> None:
     log = battlelog.parse("just some notes\nabout a game")
 
     assert log.turns == [] and log.me is None and log.result is None
+
+
+LONGER = """Setup
+Ash decided to go first.
+Ash drew 7 cards for the opening hand.
+- 7 drawn cards.
+   • Pikachu, Iono
+Ash took a mulligan.
+Ash drew 7 cards for the opening hand.
+- 7 drawn cards.
+   • Raichu, Iono, Basic Lightning Energy
+Gary drew 7 cards for the opening hand.
+- 7 drawn cards.
+
+Ash's Turn
+Ash's Raichu used Thunder on Gary's Tauros for 120 damage.
+- Damage breakdown:
+   • Base damage: 100 damage
+   • Weakness: 20 damage
+Gary's Tauros was Knocked Out!
+Ash took 2 Prize cards.
+
+Gary's Turn
+Gary's Paldean Tauros used Raging Charge on Ash's Raichu for 200 damage.
+Gary's Paldean Tauros used Raging Charge on Ash's Raichu for 200 damage.
+Gary's Miltank used Tackle on Ash's Pikachu for 20 damage.
+Gary took a Prize card.
+"""
+
+
+def test_opening_hand_is_the_one_kept_after_a_mulligan() -> None:
+    assert battlelog.parse(LONGER).opening_hand() == ["Raichu", "Iono", "Basic Lightning Energy"]
+    assert battlelog.parse(LOG).opening_hand()[:2] == ["Buddy-Buddy Poffin", "Budew"]
+
+
+def test_prize_race_counts_per_turn() -> None:
+    race = battlelog.parse(LONGER).prize_race()
+
+    assert race == [
+        {"turn": 1, "owner": "you", "you": 2, "opponent": 0},
+        {"turn": 2, "owner": "opponent", "you": 2, "opponent": 1},
+    ]
+
+
+def test_several_item_lines_under_one_detail() -> None:
+    attack = battlelog.parse(LONGER).turns[0].actions[0]
+
+    assert attack.details == ["Damage breakdown: Base damage: 100 damage, Weakness: 20 damage"]
+
+
+def test_deck_name_from_the_main_attackers() -> None:
+    log = battlelog.parse(LONGER)
+
+    # the main attacker; Miltank attacked once and is left out
+    assert log.deck_name("Gary") == "Paldean Tauros"
+    assert log.deck_name("Ash") == "Raichu"
+    # nobody attacked in this one: fall back to what was played
+    quiet = battlelog.parse(LOG)
+    assert quiet.deck_name(quiet.opponent) == "Dhelmise / Poltchageist"

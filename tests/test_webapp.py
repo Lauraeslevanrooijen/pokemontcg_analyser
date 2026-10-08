@@ -631,3 +631,48 @@ def test_logging_a_match_with_a_battle_log_takes_the_result_from_it(client: Test
     resp = client.post("/matches", data={"deck": "Pult", "result": "win", "battle_log": "nonsense"})
     assert resp.status_code == 400
     assert len(storage.list_matches()) == 1
+
+
+def test_battle_log_names_the_opponent_and_reuses_a_name_given_earlier(client: TestClient) -> None:
+    text = (Path(__file__).parent / "data" / "battle_log.txt").read_text()
+    data = {"deck": "Pult", "result": "win", "battle_log": text}
+
+    client.post("/matches", data=data, follow_redirects=False)
+    first = storage.list_matches()[0]
+    assert first.opponent_deck == "Dhelmise / Poltchageist"  # from what the opponent played
+
+    # I rename it; the next game against the same Pokémon gets my name
+    storage.set_opponent_deck(first.id, "Banette control")
+    client.post("/matches", data=data, follow_redirects=False)
+    newest = max(storage.list_matches(), key=lambda m: m.id)
+    assert newest.opponent_deck == "Banette control"
+
+    # a name typed in the form is left alone
+    client.post("/matches", data={**data, "opponent_deck": "My own name"}, follow_redirects=False)
+    assert max(storage.list_matches(), key=lambda m: m.id).opponent_deck == "My own name"
+
+
+def test_stats_show_opening_hands_from_battle_logs(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    kinds = {"Buddy-Buddy Poffin": ("Trainer", None, "Item"), "Budew": ("Pokemon", "Basic", None)}
+
+    def fake_lookup(set_code: str, number: str):
+        name = {"1": "Buddy-Buddy Poffin", "2": "Budew"}.get(number)
+        if name is None:
+            return None
+        category, stage, trainer = kinds[name]
+        return cards.Card("x", name, None, category, stage, trainer)
+
+    monkeypatch.setattr(cards, "lookup", fake_lookup)
+    text = (Path(__file__).parent / "data" / "battle_log.txt").read_text()
+    storage.log_match(deck="Slob", result="loss")  # a match without a log
+    assert "Nothing here until a match has a battle log" in client.get("/stats").text
+
+    client.post("/matches", data={"deck": "Pult", "result": "win", "battle_log": text})
+    page = client.get("/stats").text
+
+    assert "Based on the 1 game with a battle log" in page
+    assert "Buddy-Buddy Poffin" in page and "Munkidori" in page
+    # no saved list, so no Supporter/Basic counts yet
+    assert "Save the decklist on the Decks page" in page

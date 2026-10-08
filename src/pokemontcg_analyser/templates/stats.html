@@ -49,6 +49,50 @@
       </tbody>
     </table>
 
+    <h2>Opening hands</h2>
+    {% if not openings.games %}
+      <p class="muted">Nothing here until a match has a battle log. Paste one when you log a match.</p>
+    {% else %}
+      <p class="muted">
+        Based on the {{ openings.games }} {{ 'game' if openings.games == 1 else 'games' }} with a battle log.
+        {% if openings.games < 10 %}With this few games the win rates say little yet.{% endif %}
+      </p>
+      {% if openings.typed_games %}
+        <table>
+          <thead><tr><th>Opening hand had</th><th class="num">Games</th><th class="num">W&ndash;L&ndash;T with</th><th class="num">W&ndash;L&ndash;T without</th></tr></thead>
+          <tbody>
+            {% for name, (with_it, without_it) in openings.by_feature.items() %}
+              <tr>
+                <td>{{ name }}</td>
+                <td class="num">{{ with_it.total }} of {{ openings.typed_games }}</td>
+                <td class="num">{{ with_it.wins }}&ndash;{{ with_it.losses }}&ndash;{{ with_it.ties }}</td>
+                <td class="num">{{ without_it.wins }}&ndash;{{ without_it.losses }}&ndash;{{ without_it.ties }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        <p class="muted" style="font-size: 0.9em;">
+          Average opening hand:
+          {% for kind, amount in openings.average.items() %}{{ '%.1f' % amount }} {{ kind }}{{ ', ' if not loop.last else '.' }}{% endfor %}
+        </p>
+      {% else %}
+        <p class="muted">Save the decklist on the Decks page to also see Supporters, Basic Pokémon and Energy per hand.</p>
+      {% endif %}
+      <table>
+        <thead><tr><th>Card in opening hand</th><th class="num">Games</th><th class="num">W&ndash;L&ndash;T with it</th><th></th></tr></thead>
+        <tbody>
+          {% for card, r in openings.by_card.items() %}
+            <tr>
+              <td>{{ card }}</td>
+              <td class="num">{{ r.total }} of {{ openings.games }}</td>
+              <td class="num">{{ r.wins }}&ndash;{{ r.losses }}&ndash;{{ r.ties }}</td>
+              <td style="width: 30%;"><span class="bar" style="width: {{ '%.0f' % (r.total / openings.games * 100) }}%; background: var(--muted);"></span></td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% endif %}
+
     <h2>From your reviews</h2>
     {% if not stats.reviewed_matches %}
       <p class="muted">Nothing here until a match has notes.</p>

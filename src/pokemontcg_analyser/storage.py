@@ -194,6 +194,11 @@ def set_battle_log(match_id: int, text: str | None, db_path: Path | None = None)
         conn.execute("UPDATE matches SET battle_log = ? WHERE id = ?", (text or None, match_id))
 
 
+def set_opponent_deck(match_id: int, name: str | None, db_path: Path | None = None) -> None:
+    with connect(db_path) as conn:
+        conn.execute("UPDATE matches SET opponent_deck = ? WHERE id = ?", (name or None, match_id))
+
+
 def set_result(match_id: int, result: Result, db_path: Path | None = None) -> None:
     with connect(db_path) as conn:
         conn.execute("UPDATE matches SET result = ? WHERE id = ?", (result, match_id))

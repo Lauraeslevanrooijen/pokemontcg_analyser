@@ -34,6 +34,19 @@ class Card:
     id: str  # TCGdex id, "sv06-130"
     name: str
     image: str | None  # base URL; append "/low.webp" etc.
+    category: str | None = None  # "Pokemon", "Trainer" or "Energy"
+    stage: str | None = None  # "Basic", "Stage1", ... for Pokémon
+    trainer_type: str | None = None  # "Supporter", "Item", "Tool", "Stadium"
+
+    @property
+    def kind(self) -> str | None:
+        """What the card is for counting hands: "Basic Pokémon", "Evolution
+        Pokémon", "Supporter", "Item", "Tool", "Stadium" or "Energy"."""
+        if self.category == "Pokemon":
+            return "Basic Pokémon" if self.stage == "Basic" else "Evolution Pokémon"
+        if self.category == "Trainer":
+            return self.trainer_type or "Trainer"
+        return self.category
 
 
 def _client() -> httpx.Client:
@@ -123,7 +136,8 @@ def lookup(set_code: str, number: str, cache_dir: Path = DEFAULT_CACHE_DIR) -> C
     path = cache_dir / "cards.json"
     with _lock:
         cached = _read(path).get(key)
-    if cached:
+    # Entries cached before card types were kept are fetched once more.
+    if cached and "category" in cached:
         return Card(**cached)
     set_id = set_id_for(set_code, cache_dir)
     if set_id is None:
@@ -137,7 +151,14 @@ def lookup(set_code: str, number: str, cache_dir: Path = DEFAULT_CACHE_DIR) -> C
             image = data.get("image") or _picture_of_another_printing(client, data["name"])
     except httpx.HTTPError:
         return None
-    card = Card(id=data["id"], name=data["name"], image=image)
+    card = Card(
+        id=data["id"],
+        name=data["name"],
+        image=image,
+        category=data.get("category"),
+        stage=data.get("stage"),
+        trainer_type=data.get("trainerType"),
+    )
     with _lock:
         cards = _read(path)
         cards[key] = asdict(card)

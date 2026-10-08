@@ -52,3 +52,27 @@ def test_moments_filters_by_label_and_finds_the_turn(tmp_path: Path) -> None:
         (won, "wrong attacker", 2),
     ]
     assert len(insights.moments(matches, events)) == 4
+
+
+def test_openings_counts_cards_and_hand_features() -> None:
+    kinds = {"Dreepy": "Basic Pokémon", "Budew": "Basic Pokémon", "Iono": "Supporter", "Fire": "Energy"}
+    hands = [
+        ("win", ["Dreepy", "Dreepy", "Iono", "Fire", "Fire"], kinds),
+        ("loss", ["Budew", "Fire"], kinds),
+        ("loss", ["Dreepy", "Mystery card"], kinds),  # a card the list doesn't have
+        ("win", ["Dreepy"], {}),  # no saved list at all
+    ]
+
+    found = insights.openings(hands)
+
+    assert found.games == 4
+    dreepy = found.by_card["Dreepy"]
+    assert (dreepy.total, dreepy.wins, dreepy.losses) == (3, 2, 1)  # once per hand, not per copy
+    assert list(found.by_card)[0] == "Dreepy"  # most frequent first
+    # only the two hands whose every card is known count for the features
+    assert found.typed_games == 2
+    with_supporter, without = found.by_feature["A Supporter in hand"]
+    assert (with_supporter.wins, without.losses) == (1, 1)
+    one_basic, _ = found.by_feature["Only one Basic Pokémon"]
+    assert (one_basic.total, one_basic.losses) == (1, 1)
+    assert found.average == {"Basic Pokémon": 1.5, "Energy": 1.5, "Supporter": 0.5}

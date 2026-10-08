@@ -42,7 +42,10 @@ Early scaffold. Working today:
   logging the match or on its review page. The timeline then shows what
   happened in each turn, and the result and who went first come from the
   log. The log has no timestamps; it lines up with the video through the
-  turn markers.
+  turn markers. From the log the review page also shows the opening hand
+  and a chart of Prize cards taken per turn, the opponent's deck gets a
+  name when you gave none, and the Stats page compares opening hands across
+  games.
 - Decks page: save a decklist per deck with versions; matches count towards
   the version that was current when they were logged, so a change to the
   list shows up as a change in results.
