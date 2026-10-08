@@ -16,7 +16,15 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
     monkeypatch.setattr(webapp, "RECORDINGS_DIR", tmp_path / "recordings")
     monkeypatch.setattr(webapp, "_recording", None)
     monkeypatch.setattr(
-        webapp, "_screen_devices", [recorder.CaptureDevice(index=3, name="Capture screen 0")]
+        recorder,
+        "screens_and_microphones",
+        lambda: (
+            [recorder.CaptureDevice(index=3, name="Capture screen 0")],
+            [
+                recorder.CaptureDevice(index=0, name="iPhone Microphone"),
+                recorder.CaptureDevice(index=1, name="MacBook Air Microphone"),
+            ],
+        ),
     )
     return TestClient(webapp.app)
 
@@ -105,7 +113,7 @@ class _FakeRecording:
 def test_start_and_stop_recording(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
     started_with = []
 
-    def fake_start(device_index: int, out_dir: Path) -> _FakeRecording:
+    def fake_start(device_index: int, out_dir: Path, audio_index=None) -> _FakeRecording:
         started_with.append(device_index)
         return _FakeRecording(out_dir / "2026-01-01_120000.mp4")
 
@@ -165,7 +173,7 @@ def test_marks_made_while_recording_land_on_the_match(
     monkeypatch.setattr(
         recorder,
         "start_recording",
-        lambda device_index, out_dir: _FakeRecording(out_dir / "marked.mp4"),
+        lambda device_index, out_dir, audio_index=None: _FakeRecording(out_dir / "marked.mp4"),
     )
     assert client.post("/recording/mark").status_code == 409
 
@@ -340,3 +348,78 @@ def test_stats_and_moments_pages(client: TestClient) -> None:
     assert "wrong attacker" not in client.get("/moments?label=good").text
     assert "wrong attacker" in client.get("/moments?label=all").text
     assert client.get("/moments?label=nope").status_code == 404
+
+
+def test_lesson_is_saved_and_shown_on_the_start_page(client: TestClient) -> None:
+    match_id = storage.log_match(deck="Pult", opponent_deck="Iono", result="loss")
+
+    resp = client.put(f"/matches/{match_id}/lesson", json={"lesson": "  count prizes first  "})
+
+    assert resp.json() == {"lesson": "count prizes first"}
+    page = client.get("/").text
+    assert "Remember from your last games" in page
+    assert "count prizes first" in page
+
+    client.put(f"/matches/{match_id}/lesson", json={"lesson": ""})
+    assert storage.get_match(match_id).lesson is None
+    assert "Remember from your last games" not in client.get("/").text
+
+
+def test_filter_and_search_matches(client: TestClient) -> None:
+    won = storage.log_match(deck="Pult", opponent_deck="Iono", result="win")
+    storage.log_match(deck="Slob", opponent_deck="Zard", result="loss")
+    storage.add_note(won, "forgot to RETREAT", offset_seconds=5.0)
+
+    def rows(query: str) -> str:
+        page = client.get("/" + query).text
+        return page[page.index("<tbody>") : page.index("</tbody>")] if "<tbody>" in page else ""
+
+    assert "Pult" in rows("") and "Slob" in rows("")
+    assert "Pult" in rows("?result=win") and "Slob" not in rows("?result=win")
+    assert "Slob" in rows("?deck=Slob") and "Iono" not in rows("?deck=Slob")
+    assert "Zard" in rows("?q=zard") and "Iono" not in rows("?q=zard")
+    # text on the timeline is searched too
+    assert "Pult" in rows("?q=retreat") and "Slob" not in rows("?q=retreat")
+    assert "No matches fit this filter" in client.get("/?q=nothing-like-this").text
+
+
+def test_delete_recording_keeps_the_notes(client: TestClient) -> None:
+    recordings = webapp.RECORDINGS_DIR
+    (recordings / "originals").mkdir(parents=True)
+    for path in ("game.mp4", "game.json", "originals/game.mp4", "other.mp4"):
+        (recordings / path).write_bytes(b"x")
+    match_id = storage.log_match(deck="Pult", result="win", video_file="recordings/game.mp4")
+    storage.add_note(match_id, "keep me", offset_seconds=5.0)
+    storage.set_game_start(match_id, 3.0)
+
+    resp = client.post(f"/matches/{match_id}/recording/delete", follow_redirects=False)
+
+    assert resp.status_code == 303
+    assert sorted(p.name for p in recordings.rglob("*") if p.is_file()) == ["other.mp4"]
+    match = storage.get_match(match_id)
+    assert match.video_file is None and match.game_start_seconds is None
+    assert [e.detail for e in storage.list_events(match_id)] == ["keep me"]
+    assert client.post(f"/matches/{match_id}/recording/delete").status_code == 400
+
+
+def test_recording_with_voice_passes_the_microphone(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    audio = []
+
+    def fake_start(device_index: int, out_dir: Path, audio_index=None) -> _FakeRecording:
+        audio.append(audio_index)
+        return _FakeRecording(out_dir / f"take{len(audio)}.mp4")
+
+    monkeypatch.setattr(recorder, "start_recording", fake_start)
+
+    mic = "MacBook Air Microphone"
+    client.post("/recording/start", data={"voice": "true", "microphone": mic}, follow_redirects=False)
+    client.post("/recording/stop", follow_redirects=False)
+    # a microphone is chosen in the form but the box is not ticked
+    client.post("/recording/start", data={"microphone": mic}, follow_redirects=False)
+    client.post("/recording/stop", follow_redirects=False)
+
+    assert audio == [1, None]
+    resp = client.post("/recording/start", data={"voice": "true", "microphone": "Unplugged headset"})
+    assert resp.status_code == 400

@@ -33,7 +33,8 @@ CREATE TABLE IF NOT EXISTS matches (
     notes TEXT,
     video_file TEXT,
     turn_order TEXT CHECK (turn_order IN ('first', 'second')),
-    game_start_seconds REAL
+    game_start_seconds REAL,
+    lesson TEXT
 );
 
 CREATE TABLE IF NOT EXISTS match_events (
@@ -68,6 +69,8 @@ def connect(db_path: Path | None = None) -> Iterator[sqlite3.Connection]:
             conn.execute("ALTER TABLE matches ADD COLUMN turn_order TEXT")
         if "game_start_seconds" not in columns:
             conn.execute("ALTER TABLE matches ADD COLUMN game_start_seconds REAL")
+        if "lesson" not in columns:
+            conn.execute("ALTER TABLE matches ADD COLUMN lesson TEXT")
         yield conn
         conn.commit()
     finally:
@@ -86,6 +89,7 @@ class Match:
     turn_order: TurnOrder | None = None  # whether you went first or second
     # Where in the recording the game itself begins (after menus/matchmaking).
     game_start_seconds: float | None = None
+    lesson: str | None = None  # the one thing to take away from this game
 
 
 def log_match(
@@ -128,6 +132,21 @@ def set_turn_order(
     with connect(db_path) as conn:
         conn.execute(
             "UPDATE matches SET turn_order = ? WHERE id = ?", (turn_order, match_id)
+        )
+
+
+def set_lesson(match_id: int, lesson: str | None, db_path: Path | None = None) -> None:
+    with connect(db_path) as conn:
+        conn.execute("UPDATE matches SET lesson = ? WHERE id = ?", (lesson or None, match_id))
+
+
+def clear_video(match_id: int, db_path: Path | None = None) -> None:
+    """Detach a match from its recording (the notes stay) and forget the
+    game start, which only meant something as a position in that video."""
+    with connect(db_path) as conn:
+        conn.execute(
+            "UPDATE matches SET video_file = NULL, game_start_seconds = NULL WHERE id = ?",
+            (match_id,),
         )
 
 

@@ -99,3 +99,24 @@ def test_purge_originals_only_removes_old_files(tmp_path) -> None:
 
 def test_purge_originals_without_originals_folder(tmp_path) -> None:
     assert recorder.purge_originals(tmp_path, max_age_days=14) == []
+
+
+def test_audio_devices_parses_the_audio_section() -> None:
+    with patch("pokemontcg_analyser.recorder.require_ffmpeg", return_value="ffmpeg"):
+        with patch(
+            "pokemontcg_analyser.recorder.subprocess.run",
+            return_value=_FakeResult(FFMPEG_LIST_DEVICES_STDERR),
+        ):
+            devices = recorder.audio_devices()
+
+    assert devices == [recorder.CaptureDevice(index=0, name="MacBook Pro Microphone")]
+
+
+def test_build_ffmpeg_command_with_microphone(tmp_path) -> None:
+    silent = recorder.build_ffmpeg_command("ffmpeg", 3, tmp_path / "x.mp4")
+    voiced = recorder.build_ffmpeg_command("ffmpeg", 3, tmp_path / "x.mp4", audio_index=1)
+
+    assert silent[silent.index("-i") + 1] == "3:none"
+    assert "-c:a" not in silent
+    assert voiced[voiced.index("-i") + 1] == "3:1"
+    assert voiced[voiced.index("-c:a") + 1] == "aac"

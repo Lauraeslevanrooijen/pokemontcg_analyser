@@ -34,7 +34,6 @@ VOICE_EXTENSIONS = {"audio/webm": "webm", "audio/mp4": "m4a", "audio/ogg": "ogg"
 # The one recording in progress, if any. Screen capture is a single shared
 # resource and this app is a single local process, so module state is enough.
 _recording: recorder.Recording | None = None
-_screen_devices: list[recorder.CaptureDevice] | None = None
 
 
 @asynccontextmanager
@@ -60,15 +59,14 @@ def db_path() -> Path:
     return storage.DEFAULT_DB_PATH
 
 
-def screen_devices() -> list[recorder.CaptureDevice]:
-    """Screens that can be recorded; looked up once, since it shells out."""
-    global _screen_devices
-    if _screen_devices is None:
-        try:
-            _screen_devices = recorder.screen_devices()
-        except recorder.FfmpegNotFoundError:
-            return []
-    return _screen_devices
+def capture_devices() -> tuple[list[recorder.CaptureDevice], list[recorder.CaptureDevice]]:
+    """The screens and microphones available right now. Not cached: device
+    indexes shift whenever a camera or microphone (an iPhone, a headset)
+    connects, and a stale index would record the wrong thing."""
+    try:
+        return recorder.screens_and_microphones()
+    except recorder.FfmpegNotFoundError:
+        return [], []
 
 
 def active_recording() -> recorder.Recording | None:
@@ -85,20 +83,72 @@ def unlogged_recordings(matches: list[storage.Match]) -> list[str]:
     return sorted(names, reverse=True)
 
 
+def format_size(size: int) -> str:
+    if size >= 1024**3:
+        return f"{size / 1024**3:.1f} GB"
+    return f"{size / 1024**2:.0f} MB"
+
+
+def matches_matching(
+    matches: list[storage.Match], q: str, result: str, deck: str
+) -> list[storage.Match]:
+    """Filter by result and deck, and search the free text of a match:
+    deck names, notes, lesson and everything written on its timeline."""
+    needle = q.strip().lower()
+    note_text: dict[int, str] = {}
+    if needle:
+        for event in storage.list_all_events(db_path=db_path()):
+            if event.detail:
+                note_text[event.match_id] = note_text.get(event.match_id, "") + "\n" + event.detail
+    found = []
+    for m in matches:
+        if result and m.result != result:
+            continue
+        if deck and m.deck != deck:
+            continue
+        haystack = "\n".join(
+            [m.deck, m.opponent_deck or "", m.notes or "", m.lesson or "", note_text.get(m.id, "")]
+        ).lower()
+        if needle and needle not in haystack:
+            continue
+        found.append(m)
+    return found
+
+
 @app.get("/")
-def index(request: Request, video: str | None = None):
+def index(
+    request: Request,
+    video: str | None = None,
+    q: str = "",
+    result: str = "",
+    deck: str = "",
+):
     matches = storage.list_matches(db_path=db_path())
     recording = active_recording()
+    screens, microphones = ([], []) if recording else capture_devices()
+    sizes = {p.name: p.stat().st_size for p in RECORDINGS_DIR.glob("*.mp4")}
+    total_size = sum(p.stat().st_size for p in RECORDINGS_DIR.rglob("*") if p.is_file())
     # The app can stay open for days, so don't rely on startup alone.
     recorder.purge_originals(RECORDINGS_DIR, ORIGINALS_RETENTION_DAYS)
     return templates.TemplateResponse(
         request,
         "index.html",
         {
-            "matches": matches,
+            "matches": matches_matching(matches, q, result, deck),
+            "total_matches": len(matches),
+            "filters": {"q": q, "result": result, "deck": deck},
+            "my_decks": sorted({m.deck for m in matches}),
+            "lessons": [m for m in matches if m.lesson][:3],
+            "video_sizes": {
+                m.id: format_size(sizes[Path(m.video_file).name])
+                for m in matches
+                if m.video_file and Path(m.video_file).name in sizes
+            },
+            "total_size": format_size(total_size) if total_size else None,
             "recording": recording,
             "marks": len(recorder.read_marks(recording.video_path)) if recording else 0,
-            "devices": screen_devices(),
+            "devices": screens,
+            "microphones": microphones,
             "unlogged": unlogged_recordings(matches),
             "selected_video": video,
             "known_decks": sorted(
@@ -137,17 +187,30 @@ def moments(request: Request, label: str = "misplay"):
 
 
 @app.post("/recording/start")
-def start_recording(device: int | None = Form(None)):
+def start_recording(
+    screen: str = Form(""),
+    voice: bool = Form(False),
+    microphone: str = Form(""),
+):
+    """Devices are chosen by name and looked up again here, so the choice
+    still means the same device if the indexes moved since the page loaded."""
     global _recording
     if active_recording() is not None:
         raise HTTPException(status_code=409, detail="Already recording")
-    if device is None:
-        devices = screen_devices()
-        if not devices:
-            raise HTTPException(status_code=400, detail="No screen to record found")
-        device = devices[0].index
+    screens, microphones = capture_devices()
+    if not screens:
+        raise HTTPException(status_code=400, detail="No screen to record found")
+    device = next((d for d in screens if d.name == screen), screens[0])
+    audio_index = None
+    if voice:
+        chosen = next((d for d in microphones if d.name == microphone), None)
+        if chosen is None:
+            raise HTTPException(status_code=400, detail="That microphone is not connected")
+        audio_index = chosen.index
     try:
-        _recording = recorder.start_recording(device, RECORDINGS_DIR)
+        _recording = recorder.start_recording(
+            device.index, RECORDINGS_DIR, audio_index=audio_index
+        )
     except (RuntimeError, OSError) as exc:
         raise HTTPException(status_code=500, detail=str(exc))
     return RedirectResponse("/", status_code=303)
@@ -213,8 +276,11 @@ def match_detail(request: Request, match_id: int):
     # Trimming rewrites the file under the same name; the version in the URL
     # keeps the browser from playing its cached copy of the old one.
     video_version = 0
+    video_size = None
     if video_filename and (RECORDINGS_DIR / video_filename).is_file():
-        video_version = int((RECORDINGS_DIR / video_filename).stat().st_mtime)
+        video_stat = (RECORDINGS_DIR / video_filename).stat()
+        video_version = int(video_stat.st_mtime)
+        video_size = format_size(video_stat.st_size)
     return templates.TemplateResponse(
         request,
         "match.html",
@@ -224,6 +290,7 @@ def match_detail(request: Request, match_id: int):
             "labels": storage.LABELS,
             "video_filename": video_filename,
             "video_version": video_version,
+            "video_size": video_size,
             "retention_days": ORIGINALS_RETENTION_DAYS,
         },
     )
@@ -263,6 +330,40 @@ def set_turn_order(match_id: int, body: TurnOrderIn):
     _require_match(match_id)
     storage.set_turn_order(match_id, body.turn_order, db_path=db_path())
     return {"turn_order": body.turn_order}
+
+
+class LessonIn(BaseModel):
+    lesson: str = ""
+
+
+@app.put("/matches/{match_id}/lesson")
+def set_lesson(match_id: int, body: LessonIn):
+    _require_match(match_id)
+    lesson = body.lesson.strip()
+    storage.set_lesson(match_id, lesson, db_path=db_path())
+    return {"lesson": lesson or None}
+
+
+@app.post("/matches/{match_id}/recording/delete")
+def delete_recording(match_id: int):
+    """Delete a match's video to free disk space; its notes are kept."""
+    match = _require_match(match_id)
+    if not match.video_file:
+        raise HTTPException(status_code=400, detail="Match has no recording")
+    name = Path(match.video_file).name
+    active = active_recording()
+    if active is not None and active.video_path.name == name:
+        raise HTTPException(status_code=409, detail="Still recording this video")
+    video_path = RECORDINGS_DIR / name
+    for path in (
+        video_path,
+        video_path.with_suffix(".json"),
+        video_path.with_suffix(".log"),
+        RECORDINGS_DIR / recorder.ORIGINALS_DIRNAME / name,
+    ):
+        path.unlink(missing_ok=True)
+    storage.clear_video(match_id, db_path=db_path())
+    return RedirectResponse(f"/matches/{match_id}", status_code=303)
 
 
 class GameStartIn(BaseModel):

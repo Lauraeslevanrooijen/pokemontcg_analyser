@@ -38,16 +38,15 @@ class CaptureDevice:
     name: str
 
 
-def list_avfoundation_devices() -> list[CaptureDevice]:
-    """List avfoundation video devices (screens, displays, capture cards).
-
-    Parses ffmpeg's `-list_devices true` stderr output, which looks like:
+def _list_devices() -> dict[str, list[CaptureDevice]]:
+    """Parse ffmpeg's `-list_devices true` stderr output into its "video"
+    and "audio" sections. It looks like:
 
         [AVFoundation indev @ 0x...] AVFoundation video devices:
         [AVFoundation indev @ 0x...] [0] FaceTime HD Camera
         [AVFoundation indev @ 0x...] [1] Capture screen 0
         [AVFoundation indev @ 0x...] AVFoundation audio devices:
-        ...
+        [AVFoundation indev @ 0x...] [0] MacBook Pro Microphone
     """
     ffmpeg = require_ffmpeg()
     result = subprocess.run(
@@ -55,16 +54,16 @@ def list_avfoundation_devices() -> list[CaptureDevice]:
         capture_output=True,
         text=True,
     )
-    devices: list[CaptureDevice] = []
-    in_video_section = False
+    devices: dict[str, list[CaptureDevice]] = {"video": [], "audio": []}
+    current_section = None
     for line in result.stderr.splitlines():
         if "AVFoundation video devices" in line:
-            in_video_section = True
+            current_section = "video"
             continue
         if "AVFoundation audio devices" in line:
-            in_video_section = False
+            current_section = "audio"
             continue
-        if not in_video_section:
+        if current_section is None:
             continue
         marker = "] ["
         idx = line.find(marker)
@@ -79,8 +78,24 @@ def list_avfoundation_devices() -> list[CaptureDevice]:
         except ValueError:
             continue
         name = rest[close + 1 :].strip()
-        devices.append(CaptureDevice(index=device_index, name=name))
+        devices[current_section].append(CaptureDevice(index=device_index, name=name))
     return devices
+
+
+def list_avfoundation_devices() -> list[CaptureDevice]:
+    """List avfoundation video devices (screens, displays, capture cards)."""
+    return _list_devices()["video"]
+
+
+def audio_devices() -> list[CaptureDevice]:
+    """List avfoundation audio inputs (microphones)."""
+    return _list_devices()["audio"]
+
+
+def screens_and_microphones() -> tuple[list[CaptureDevice], list[CaptureDevice]]:
+    """Both lists from a single ffmpeg call."""
+    devices = _list_devices()
+    return [d for d in devices["video"] if "Capture screen" in d.name], devices["audio"]
 
 
 def screen_devices() -> list[CaptureDevice]:
@@ -134,7 +149,11 @@ def build_ffmpeg_command(
     framerate: int = 30,
     capture_cursor: bool = True,
     max_width: int = 1920,
+    audio_index: int | None = None,
 ) -> list[str]:
+    """`audio_index` adds a microphone to the recording, for talking
+    through your plays while you make them."""
+    audio = [] if audio_index is None else ["-c:a", "aac", "-b:a", "128k"]
     return [
         ffmpeg,
         # Needed by hwupload/scale_vt in the filter chain below.
@@ -154,7 +173,7 @@ def build_ffmpeg_command(
         "-capture_cursor",
         "1" if capture_cursor else "0",
         "-i",
-        f"{device_index}:none",
+        f"{device_index}:{'none' if audio_index is None else audio_index}",
         # ffmpeg's avfoundation input holds a single pending frame: whenever
         # the rest of the pipeline falls behind, the next captured frame
         # silently replaces it. Output timestamps are therefore uneven (a
@@ -203,6 +222,7 @@ def build_ffmpeg_command(
         # what makes the pipeline fall behind and drop frames mid-animation.
         "-vf",
         f"format=nv12,hwupload,scale_vt=w='min({max_width},iw)':h=-2",
+        *audio,
         "-movflags",
         "+faststart",
         str(video_path),
@@ -279,6 +299,7 @@ def start_recording(
     framerate: int = 30,
     capture_cursor: bool = True,
     max_width: int = 1920,
+    audio_index: int | None = None,
 ) -> Recording:
     """Start recording in the background; call `.stop()` on the result.
 
@@ -294,7 +315,7 @@ def start_recording(
     _write_sidecar(video_path, device_index, framerate, started_at)
 
     cmd = build_ffmpeg_command(
-        ffmpeg, device_index, video_path, framerate, capture_cursor, max_width
+        ffmpeg, device_index, video_path, framerate, capture_cursor, max_width, audio_index
     )
     cmd[1:1] = ["-hide_banner", "-nostats"]
     with log_path.open("wb") as log:

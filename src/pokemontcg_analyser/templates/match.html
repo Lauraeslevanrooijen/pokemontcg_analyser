@@ -46,7 +46,7 @@
     .scrub-marker.label-{{ key }} { background: var(--c); }
     {% endfor %}
 
-    .turn-order { display: flex; align-items: center; gap: 10px; margin: -8px 0 16px; }
+    .turn-order { display: flex; align-items: center; gap: 10px; margin: -8px 0 16px; flex-wrap: wrap; }
     .segmented { display: inline-flex; }
     .segmented button { border-radius: 0; padding: 4px 14px; }
     .segmented button:first-child { border-radius: 6px 0 0 6px; }
@@ -107,6 +107,9 @@
       <button type="button" class="secondary" data-order="first">First</button>
       <button type="button" class="secondary" data-order="second">Second</button>
     </span>
+    <input id="lesson" value="{{ match.lesson or '' }}" autocomplete="off"
+           placeholder="What do I take from this game?" style="flex: 1; min-width: 200px; max-width: 640px;">
+    <span id="lesson-saved" class="muted" style="font-size: 0.85em;"></span>
   </p>
 
   <div class="review">
@@ -142,6 +145,12 @@
             <kbd>&lt;</kbd> <kbd>&gt;</kbd> speed <span id="speed">1&times;</span>
           </p>
         </div>
+        <form method="post" action="/matches/{{ match.id }}/recording/delete" class="muted"
+              style="font-size: 0.85em; margin-top: 10px; display: flex; gap: 10px; align-items: center;"
+              onsubmit="return confirm('Delete this recording{{ ' (' ~ video_size ~ ')' if video_size else '' }}?\n\nThe notes and turns stay, but the video is gone for good.');">
+          <span>{{ video_filename }}{{ ' · ' ~ video_size if video_size else '' }}</span>
+          <button type="submit" class="secondary" style="padding: 2px 10px;">Delete recording</button>
+        </form>
       {% else %}
         <p class="muted">No recording attached to this match.</p>
       {% endif %}
@@ -442,6 +451,22 @@
     function turnOwner(turn) {
       return (turn % 2 === 1) === (turnOrder === 'first') ? 'you' : 'opponent';
     }
+
+    const lessonInput = document.getElementById('lesson');
+    let savedLesson = lessonInput.value;
+    async function saveLesson() {
+      if (lessonInput.value.trim() === savedLesson) return;
+      const saved = await api('PUT', `/matches/${matchId}/lesson`, { lesson: lessonInput.value });
+      if (!saved) return;
+      savedLesson = saved.lesson || '';
+      const note = document.getElementById('lesson-saved');
+      note.textContent = 'Saved';
+      setTimeout(() => { note.textContent = ''; }, 1500);
+    }
+    lessonInput.addEventListener('blur', saveLesson);
+    lessonInput.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Enter' || ev.key === 'Escape') lessonInput.blur();
+    });
 
     function renderTurnOrder() {
       document.querySelectorAll('#turn-order button').forEach((button) => {

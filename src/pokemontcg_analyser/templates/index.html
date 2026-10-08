@@ -41,16 +41,55 @@
       <form method="post" action="/recording/start" style="display: flex; align-items: center; gap: 12px;">
         <strong style="flex: 1;">Record a match</strong>
         {% if devices|length > 1 %}
-          <select name="device">
-            {% for d in devices %}<option value="{{ d.index }}">{{ d.name }}</option>{% endfor %}
+          <select name="screen">
+            {% for d in devices %}<option value="{{ d.name }}">{{ d.name }}</option>{% endfor %}
+          </select>
+        {% endif %}
+        {% if microphones %}
+          <label class="muted" style="display: flex; align-items: center; gap: 6px;">
+            <input type="checkbox" name="voice" value="true" id="record-voice"> Record my voice
+          </label>
+          <select name="microphone" id="record-microphone" hidden>
+            {# the built-in microphone is the likeliest one to want #}
+            {% for d in microphones %}<option value="{{ d.name }}" {{ 'selected' if 'MacBook' in d.name else '' }}>{{ d.name }}</option>{% endfor %}
           </select>
         {% endif %}
         <button type="submit">Start recording</button>
       </form>
+      {% if microphones %}
+        <script>
+          // Remember the microphone choice between games.
+          const voiceBox = document.getElementById('record-voice');
+          const micSelect = document.getElementById('record-microphone');
+          let stored = {};
+          try { stored = JSON.parse(localStorage.getItem('record-voice') || '{}'); } catch (err) {}
+          voiceBox.checked = Boolean(stored.on);
+          if ([...micSelect.options].some((o) => o.value === stored.name)) micSelect.value = stored.name;
+          const sync = () => {
+            micSelect.hidden = !voiceBox.checked;
+            const name = micSelect.value;
+            try { localStorage.setItem('record-voice', JSON.stringify({ on: voiceBox.checked, name })); } catch (err) {}
+          };
+          voiceBox.addEventListener('change', sync);
+          micSelect.addEventListener('change', sync);
+          sync();
+        </script>
+      {% endif %}
     {% else %}
       <span class="muted">Recording unavailable: no screen capture device found (is ffmpeg installed?).</span>
     {% endif %}
   </div>
+
+  {% if lessons and not selected_video %}
+    <div class="panel" style="margin-bottom: 24px;">
+      <strong>Remember from your last games</strong>
+      <ul style="margin: 8px 0 0; padding-left: 20px;">
+        {% for m in lessons %}
+          <li>{{ m.lesson }} <a class="muted" href="/matches/{{ m.id }}">{{ m.deck }} vs {{ m.opponent_deck or '?' }}</a></li>
+        {% endfor %}
+      </ul>
+    </div>
+  {% endif %}
 
   {% if not recording %}
     <div class="panel{{ ' highlight' if selected_video else '' }}" style="margin-bottom: 24px;">
@@ -87,24 +126,49 @@
 
   <h1>Matches</h1>
 
+  {% if total_matches %}
+    <form class="inline" method="get" action="/" style="grid-template-columns: 2fr 1fr 1fr auto auto;">
+      <input name="q" value="{{ filters.q }}" placeholder="Search decks, notes and lessons">
+      <select name="deck">
+        <option value="">All my decks</option>
+        {% for d in my_decks %}<option value="{{ d }}" {{ 'selected' if d == filters.deck else '' }}>{{ d }}</option>{% endfor %}
+      </select>
+      <select name="result">
+        <option value="">Any result</option>
+        {% for r in ['win', 'loss', 'tie'] %}<option value="{{ r }}" {{ 'selected' if r == filters.result else '' }}>{{ r|capitalize }}</option>{% endfor %}
+      </select>
+      <button type="submit" class="secondary">Filter</button>
+      {% if filters.q or filters.deck or filters.result %}<a href="/" class="muted" style="align-self: center;">Clear</a>{% endif %}
+    </form>
+  {% endif %}
+
   {% if matches %}
     <table>
       <thead>
-        <tr><th>Played</th><th>Deck</th><th>Opponent</th><th>Result</th><th>Video</th></tr>
+        <tr><th>Played</th><th>Deck</th><th>Opponent</th><th>Result</th><th>Lesson</th><th class="num">Video</th></tr>
       </thead>
       <tbody>
         {% for m in matches %}
           <tr class="clickable" onclick="window.location='/matches/{{ m.id }}'">
-            <td>{{ m.played_at_utc[:16].replace('T', ' ') }}</td>
+            <td style="white-space: nowrap;">{{ m.played_at_utc[:16].replace('T', ' ') }}</td>
             <td>{{ m.deck }}</td>
             <td>{{ m.opponent_deck or '—' }}</td>
             <td><span class="badge badge-{{ m.result }}">{{ m.result }}</span></td>
-            <td>{{ 'yes' if m.video_file else '—' }}</td>
+            <td class="muted">{{ m.lesson or '' }}</td>
+            <td class="num" style="white-space: nowrap;">{{ video_sizes.get(m.id, 'missing') if m.video_file else '—' }}</td>
           </tr>
         {% endfor %}
       </tbody>
     </table>
+    {% if matches|length < total_matches %}
+      <p class="muted">Showing {{ matches|length }} of {{ total_matches }} matches.</p>
+    {% endif %}
+  {% elif total_matches %}
+    <p class="muted">No matches fit this filter.</p>
   {% else %}
     <p class="muted">No matches logged yet.</p>
+  {% endif %}
+  {% if total_size %}
+    <p class="muted" style="font-size: 0.85em;">Recordings and voice notes use {{ total_size }} on disk.</p>
   {% endif %}
 {% endblock %}
