@@ -569,7 +569,7 @@ def test_start_without_screen_recording_permission_explains_what_to_do(
     assert "Start recording" in page  # and it can be tried again
 
     monkeypatch.setattr(
-        recorder, "start_recording", lambda *a, **o: _FakeRecording(Path("recordings/x.mp4"))
+        recorder, "start_recording", lambda *a, **o: _FakeRecording(webapp.RECORDINGS_DIR / "x.mp4")
     )
     client.post("/recording/start", follow_redirects=False)
     client.post("/recording/stop", follow_redirects=False)
