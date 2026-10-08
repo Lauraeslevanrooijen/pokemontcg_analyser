@@ -18,6 +18,8 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
     monkeypatch.setattr(webapp, "RECORDINGS_DIR", tmp_path / "recordings")
     monkeypatch.setattr(webapp, "_recording", None)
     monkeypatch.setattr(webapp, "_recording_problem", None)
+    # No test should read a real video; those that want turns say so.
+    monkeypatch.setattr(turns, "detect_turns", lambda path: [])
     monkeypatch.setattr(recorder, "game_crop", lambda: None)
     # No test should load the real speech model.
     monkeypatch.setattr(transcribe, "available", lambda: False)
@@ -32,7 +34,11 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
             ],
         ),
     )
-    return TestClient(webapp.app)
+    yield TestClient(webapp.app)
+    # Let background work finish before the next test swaps the database.
+    deadline = time.time() + 5
+    while (webapp._detecting or webapp._transcribing) and time.time() < deadline:
+        time.sleep(0.01)
 
 
 def test_index_lists_matches(client: TestClient) -> None:
@@ -676,3 +682,50 @@ def test_stats_show_opening_hands_from_battle_logs(
     assert "Buddy-Buddy Poffin" in page and "Munkidori" in page
     # no saved list, so no Supporter/Basic counts yet
     assert "Save the decklist on the Decks page" in page
+
+
+def _wait_for_detection(client: TestClient, match_id: int) -> dict:
+    deadline = time.time() + 5
+    while True:
+        timeline = client.get(f"/matches/{match_id}/timeline").json()
+        if not timeline["detecting"]:
+            return timeline
+        assert time.time() < deadline, "turn detection never finished"
+        time.sleep(0.02)
+
+
+def test_turns_are_detected_in_the_background_when_a_recording_is_logged(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    webapp.RECORDINGS_DIR.mkdir()
+    (webapp.RECORDINGS_DIR / "game.mp4").write_bytes(b"")
+    monkeypatch.setattr(
+        turns, "detect_turns", lambda path: [turns.Turn(63.0, "opponent"), turns.Turn(112.5, "you")]
+    )
+
+    client.post(
+        "/matches",
+        data={"deck": "Pult", "result": "win", "video_file": "game.mp4"},
+        follow_redirects=False,
+    )
+    match_id = storage.list_matches()[0].id
+    timeline = _wait_for_detection(client, match_id)
+
+    assert [(e["kind"], e["detail"]) for e in timeline["events"]] == [
+        ("turn", "opponent"),
+        ("turn", "you"),
+    ]
+    assert timeline["turn_order"] == "second"
+
+
+def test_background_detection_leaves_existing_turn_markers_alone(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    match_id = storage.log_match(deck="Pult", result="win", video_file="recordings/game.mp4")
+    storage.add_event(match_id, "turn", offset_seconds=5.0)
+    monkeypatch.setattr(turns, "detect_turns", lambda path: [turns.Turn(63.0, "opponent")])
+
+    webapp.detect_turns_in_background(match_id)
+    timeline = _wait_for_detection(client, match_id)
+
+    assert [e["offset_seconds"] for e in timeline["events"]] == [5.0]

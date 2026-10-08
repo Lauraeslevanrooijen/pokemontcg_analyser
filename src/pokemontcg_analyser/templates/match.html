@@ -891,6 +891,30 @@
       }, 2000);
     }
 
+    // Turns are looked for in the background as soon as a match with a
+    // recording is logged; show that, and pick the result up when it lands.
+    function followDetection() {
+      const button = document.getElementById('detect-button');
+      if (!button) return;
+      button.disabled = true;
+      button.textContent = 'Detecting turns…';
+      const timer = setInterval(async () => {
+        const resp = await fetch(`/matches/${matchId}/timeline`);
+        if (!resp.ok) return clearInterval(timer);
+        const latest = await resp.json();
+        if (latest.detecting) return;
+        clearInterval(timer);
+        button.disabled = false;
+        button.textContent = 'Detect turns';
+        // keep notes added while waiting; only the turns are new
+        const known = new Set(events.map((e) => e.id));
+        events = events.concat(latest.events.filter((e) => !known.has(e.id)));
+        turnOrder = latest.turn_order;
+        renderTurnOrder();
+        if (editingId === null) render();
+      }, 1500);
+    }
+
     async function detectTurns() {
       const existing = events.filter((e) => e.kind === 'turn').length;
       if (existing && !confirm(`Replace the ${existing} turn markers on this match with detected ones?`)) return;
@@ -1057,5 +1081,6 @@
     renderTurnOrder();
     render();
     events.filter((e) => e.transcribing).forEach(followTranscription);
+    if ({{ detecting_turns|tojson }}) followDetection();
   </script>
 {% endblock %}

@@ -12,6 +12,7 @@ from __future__ import annotations
 import queue
 import subprocess
 import threading
+import traceback
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -443,6 +444,7 @@ def create_match(
             [(offset, "mark", None) for offset in recorder.read_marks(video_path)],
             db_path=db_path(),
         )
+        detect_turns_in_background(match_id)
     # With a recording attached the next thing to do is watch it back.
     return RedirectResponse(
         f"/matches/{match_id}" if video_path or log is not None else "/", status_code=303
@@ -477,6 +479,7 @@ def match_detail(request: Request, match_id: int):
             "retention_days": ORIGINALS_RETENTION_DAYS,
             "can_transcribe": transcribe.available(),
             "battle_log": _battle_log_json(match.battle_log, match),
+            "detecting_turns": match_id in _detecting,
         },
     )
 
@@ -694,11 +697,12 @@ def trim_to_game_start(match_id: int):
     active = active_recording()
     if active is not None and active.video_path.name == video_path.name:
         raise HTTPException(status_code=409, detail="Still recording this video")
-    try:
-        removed = recorder.trim_start(video_path, match.game_start_seconds)
-    except (OSError, subprocess.CalledProcessError, ValueError) as exc:
-        raise HTTPException(status_code=500, detail=f"Trimming failed: {exc}")
-    storage.shift_offsets(match_id, removed, db_path=db_path())
+    with _video_lock:
+        try:
+            removed = recorder.trim_start(video_path, match.game_start_seconds)
+        except (OSError, subprocess.CalledProcessError, ValueError) as exc:
+            raise HTTPException(status_code=500, detail=f"Trimming failed: {exc}")
+        storage.shift_offsets(match_id, removed, db_path=db_path())
     return {"removed_seconds": removed}
 
 
@@ -764,7 +768,10 @@ async def add_voice_note(
 
 @app.get("/events/{event_id}")
 def get_event(event_id: int):
-    return _event_json(_require_event(event_id))
+    # Asked before the event is read, for the same reason as in
+    # _timeline_json: "done" must describe the text that is returned.
+    transcribing = event_id in _transcribing
+    return {**_event_json(_require_event(event_id)), "transcribing": transcribing}
 
 
 @app.post("/events/{event_id}/transcribe")
@@ -780,6 +787,79 @@ def transcribe_event(event_id: int):
     return _event_json(event)
 
 
+# Matches whose recording is being searched for turns in the background,
+# with how many searches are running: counted, so one search finishing
+# doesn't report a match as done while another is still going.
+_detecting: dict[int, int] = {}
+_detecting_lock = threading.Lock()
+# Held while a recording is read for turns or rewritten by trimming, so a
+# trim never moves the video out from under a detection.
+_video_lock = threading.Lock()
+
+
+def _store_detected_turns(match_id: int, replace: bool) -> list[turns.Turn]:
+    """Find the turns in a match's recording and put them on its timeline.
+    With `replace` off, markers that are already there are left alone."""
+    with _video_lock:
+        match = storage.get_match(match_id, db_path=db_path())
+        if match is None or not match.video_file:
+            return []
+        found = turns.detect_turns(RECORDINGS_DIR / Path(match.video_file).name)
+        if not found:
+            return []
+        # Reading the video takes a while; look at the match as it is now.
+        match = storage.get_match(match_id, db_path=db_path())
+        if match is None:
+            return []
+        has_markers = any(e.kind == "turn" for e in storage.list_events(match_id, db_path=db_path()))
+        if replace or not has_markers:
+            storage.replace_turns(
+                match_id, [(t.offset_seconds, t.owner) for t in found], db_path=db_path()
+            )
+            if match.turn_order is None:
+                order = "first" if found[0].owner == "you" else "second"
+                storage.set_turn_order(match_id, order, db_path=db_path())
+        return found
+
+
+def detect_turns_in_background(match_id: int) -> None:
+    """Start looking for turns right away, so they are there (or nearly)
+    by the time the review page is open."""
+
+    def work() -> None:
+        try:
+            _store_detected_turns(match_id, replace=False)
+        except Exception:
+            # The button on the page still works; leave a trace in the log.
+            traceback.print_exc()
+        finally:
+            with _detecting_lock:
+                _detecting[match_id] -= 1
+                if _detecting[match_id] <= 0:
+                    del _detecting[match_id]
+
+    with _detecting_lock:
+        _detecting[match_id] = _detecting.get(match_id, 0) + 1
+    threading.Thread(target=work, daemon=True).start()
+
+
+def _timeline_json(match_id: int) -> dict:
+    # Whether a search is still running is asked first: if it isn't, what
+    # is read after this is the finished result, not a half-written one.
+    detecting = match_id in _detecting
+    match = _require_match(match_id)
+    return {
+        "events": [_event_json(e) for e in storage.list_events(match_id, db_path=db_path())],
+        "turn_order": match.turn_order,
+        "detecting": detecting,
+    }
+
+
+@app.get("/matches/{match_id}/timeline")
+def timeline(match_id: int):
+    return _timeline_json(match_id)
+
+
 @app.post("/matches/{match_id}/detect-turns")
 def detect_turns(match_id: int):
     """Find the turn changes in the recording and replace the match's turn
@@ -787,24 +867,13 @@ def detect_turns(match_id: int):
     match = _require_match(match_id)
     if not match.video_file:
         raise HTTPException(status_code=400, detail="Match has no recording")
-    video_path = RECORDINGS_DIR / Path(match.video_file).name
     try:
-        found = turns.detect_turns(video_path)
+        found = _store_detected_turns(match_id, replace=True)
     except (OSError, RuntimeError) as exc:
         raise HTTPException(status_code=500, detail=f"Could not read the recording: {exc}")
     if not found:
         raise HTTPException(status_code=422, detail="No turns found in this recording")
-    storage.replace_turns(
-        match_id, [(t.offset_seconds, t.owner) for t in found], db_path=db_path()
-    )
-    turn_order = match.turn_order
-    if turn_order is None:
-        turn_order = "first" if found[0].owner == "you" else "second"
-        storage.set_turn_order(match_id, turn_order, db_path=db_path())
-    return {
-        "events": [_event_json(e) for e in storage.list_events(match_id, db_path=db_path())],
-        "turn_order": turn_order,
-    }
+    return _timeline_json(match_id)
 
 
 @app.post("/matches/{match_id}/turns")

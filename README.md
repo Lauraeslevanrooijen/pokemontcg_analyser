@@ -32,7 +32,8 @@ Early scaffold. Working today:
   and by going first or second, misplays per reviewed game and per turn, and
   every labelled moment across all matches with a link to that point in the
   video.
-- "Detect turns" on the review page finds the turn changes in a recording
+- Turn changes are found automatically when a match with a recording is
+  logged (and again on request with "Detect turns" on the review page),
   from the ring around the playing field (its upper half lights up on the
   opponent's turn, its lower half on yours), and fills in who went first.
 - Spoken notes are written out as text on this machine, using the card and
