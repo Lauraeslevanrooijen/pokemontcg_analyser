@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}Moments — Pokémon TCG Live analyser{% endblock %}
+{% block content %}
+  <h1>Moments</h1>
+  <p style="display: flex; gap: 8px; flex-wrap: wrap;">
+    {% for key, name in labels.items() %}
+      <a class="chip label-{{ key }}" href="/moments?label={{ key }}"
+         style="padding: 6px 12px; font-size: 0.9em; {{ 'border-color: var(--c);' if key == selected else '' }}">{{ name }}</a>
+    {% endfor %}
+    <a class="chip" href="/moments?label=all"
+       style="padding: 6px 12px; font-size: 0.9em; {{ 'border-color: var(--c);' if selected == 'all' else '' }}">All</a>
+  </p>
+
+  {% if moments %}
+    <table>
+      <thead>
+        <tr><th>Match</th><th>When</th><th>Label</th><th>Note</th></tr>
+      </thead>
+      <tbody>
+        {% for m in moments %}
+          {% set offset = m.event.video_offset_seconds %}
+          {% set url = '/matches/%d' % m.match.id ~ ('?t=%.2f' % offset if offset is not none else '') %}
+          <tr class="clickable" onclick="window.location='{{ url }}'">
+            <td>
+              {{ m.match.deck }} vs {{ m.match.opponent_deck or '?' }}
+              <span class="badge badge-{{ m.match.result }}">{{ m.match.result }}</span>
+              <div class="muted" style="font-size: 0.85em;">{{ m.match.played_at_utc[:10] }}</div>
+            </td>
+            <td style="white-space: nowrap;">
+              {% if offset is not none %}{{ '%d:%02d' % (offset // 60, offset % 60) }}{% else %}&mdash;{% endif %}
+              {% if m.turn %}<div class="muted" style="font-size: 0.85em;">Turn {{ m.turn }}</div>{% endif %}
+            </td>
+            <td><span class="chip label-{{ m.event.label }}">{{ labels[m.event.label] }}</span></td>
+            <td>
+              {{ m.event.detail or '' }}
+              {% if m.event.audio_file %}<span class="muted">&#127897; voice note</span>{% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    <p class="muted">No moments with this label yet. Label them while reviewing a match.</p>
+  {% endif %}
+{% endblock %}

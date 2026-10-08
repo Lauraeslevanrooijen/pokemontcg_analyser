@@ -13,6 +13,16 @@ DEFAULT_DB_PATH = Path("data/matches.db")
 
 Result = Literal["win", "loss", "tie"]
 
+TurnOrder = Literal["first", "second"]
+
+Label = Literal["misplay", "good", "key", "luck"]
+LABELS: dict[str, str] = {
+    "misplay": "Misplay",
+    "good": "Good play",
+    "key": "Key moment",
+    "luck": "Bad luck",
+}
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS matches (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -21,7 +31,9 @@ CREATE TABLE IF NOT EXISTS matches (
     opponent_deck TEXT,
     result TEXT NOT NULL CHECK (result IN ('win', 'loss', 'tie')),
     notes TEXT,
-    video_file TEXT
+    video_file TEXT,
+    turn_order TEXT CHECK (turn_order IN ('first', 'second')),
+    game_start_seconds REAL
 );
 
 CREATE TABLE IF NOT EXISTS match_events (
@@ -29,7 +41,9 @@ CREATE TABLE IF NOT EXISTS match_events (
     match_id INTEGER NOT NULL REFERENCES matches(id) ON DELETE CASCADE,
     video_offset_seconds REAL,
     kind TEXT NOT NULL,
-    detail TEXT
+    detail TEXT,
+    label TEXT,
+    audio_file TEXT
 );
 """
 
@@ -43,6 +57,17 @@ def connect(db_path: Path | None = None) -> Iterator[sqlite3.Connection]:
     conn.row_factory = sqlite3.Row
     try:
         conn.executescript(SCHEMA)
+        # Databases created before these columns existed lack them.
+        columns = {row["name"] for row in conn.execute("PRAGMA table_info(match_events)")}
+        if "label" not in columns:
+            conn.execute("ALTER TABLE match_events ADD COLUMN label TEXT")
+        if "audio_file" not in columns:
+            conn.execute("ALTER TABLE match_events ADD COLUMN audio_file TEXT")
+        columns = {row["name"] for row in conn.execute("PRAGMA table_info(matches)")}
+        if "turn_order" not in columns:
+            conn.execute("ALTER TABLE matches ADD COLUMN turn_order TEXT")
+        if "game_start_seconds" not in columns:
+            conn.execute("ALTER TABLE matches ADD COLUMN game_start_seconds REAL")
         yield conn
         conn.commit()
     finally:
@@ -58,6 +83,9 @@ class Match:
     result: Result
     notes: str | None
     video_file: str | None
+    turn_order: TurnOrder | None = None  # whether you went first or second
+    # Where in the recording the game itself begins (after menus/matchmaking).
+    game_start_seconds: float | None = None
 
 
 def log_match(
@@ -94,6 +122,46 @@ def get_match(match_id: int, db_path: Path | None = None) -> Match | None:
         return Match(**dict(row)) if row is not None else None
 
 
+def set_turn_order(
+    match_id: int, turn_order: TurnOrder | None, db_path: Path | None = None
+) -> None:
+    with connect(db_path) as conn:
+        conn.execute(
+            "UPDATE matches SET turn_order = ? WHERE id = ?", (turn_order, match_id)
+        )
+
+
+def set_game_start(
+    match_id: int, offset_seconds: float | None, db_path: Path | None = None
+) -> None:
+    with connect(db_path) as conn:
+        conn.execute(
+            "UPDATE matches SET game_start_seconds = ? WHERE id = ?",
+            (offset_seconds, match_id),
+        )
+
+
+def shift_offsets(match_id: int, seconds: float, db_path: Path | None = None) -> None:
+    """Move a match's game start and events `seconds` earlier, after that
+    much was cut off the front of its recording. Anything that sat in the
+    removed part ends up at the very start."""
+    with connect(db_path) as conn:
+        conn.execute(
+            """
+            UPDATE match_events SET video_offset_seconds = MAX(0, video_offset_seconds - ?)
+            WHERE match_id = ? AND video_offset_seconds IS NOT NULL
+            """,
+            (seconds, match_id),
+        )
+        conn.execute(
+            """
+            UPDATE matches SET game_start_seconds = MAX(0, game_start_seconds - ?)
+            WHERE id = ? AND game_start_seconds IS NOT NULL
+            """,
+            (seconds, match_id),
+        )
+
+
 def list_matches(db_path: Path | None = None) -> list[Match]:
     with connect(db_path) as conn:
         rows = conn.execute(
@@ -117,24 +185,41 @@ def add_events(
         )
 
 
+def add_event(
+    match_id: int,
+    kind: str,
+    offset_seconds: float | None = None,
+    detail: str | None = None,
+    label: Label | None = None,
+    audio_file: str | None = None,
+    db_path: Path | None = None,
+) -> int:
+    """Insert a single event and return its id."""
+    with connect(db_path) as conn:
+        cur = conn.execute(
+            """
+            INSERT INTO match_events
+                (match_id, video_offset_seconds, kind, detail, label, audio_file)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (match_id, offset_seconds, kind, detail, label, audio_file),
+        )
+        return cur.lastrowid
+
+
 def add_note(
     match_id: int,
     text: str,
     offset_seconds: float | None = None,
+    label: Label | None = None,
     db_path: Path | None = None,
 ) -> int:
     """Attach a timestamped note to a match. Omit offset for a note about
     the match as a whole (e.g. a post-game reflection). Returns the new
     event's id."""
-    with connect(db_path) as conn:
-        cur = conn.execute(
-            """
-            INSERT INTO match_events (match_id, video_offset_seconds, kind, detail)
-            VALUES (?, ?, 'note', ?)
-            """,
-            (match_id, offset_seconds, text),
-        )
-        return cur.lastrowid
+    return add_event(
+        match_id, "note", offset_seconds, text or None, label, db_path=db_path
+    )
 
 
 @dataclass(frozen=True)
@@ -144,10 +229,12 @@ class Event:
     video_offset_seconds: float | None
     kind: str
     detail: str | None
+    label: str | None = None
+    audio_file: str | None = None  # a spoken note: filename in recordings/voice/
 
 
 def list_events(match_id: int, db_path: Path | None = None) -> list[Event]:
-    """A match's events (scene changes, notes, ...) in chronological order.
+    """A match's events (notes, turn markers, ...) in chronological order.
     Events without an offset (whole-match notes) sort first."""
     with connect(db_path) as conn:
         rows = conn.execute(
@@ -159,6 +246,46 @@ def list_events(match_id: int, db_path: Path | None = None) -> list[Event]:
             (match_id,),
         ).fetchall()
         return [Event(**dict(row)) for row in rows]
+
+
+def list_all_events(db_path: Path | None = None) -> list[Event]:
+    """Every match's events, each match's in chronological order."""
+    with connect(db_path) as conn:
+        rows = conn.execute(
+            """
+            SELECT * FROM match_events
+            ORDER BY match_id, video_offset_seconds IS NOT NULL, video_offset_seconds
+            """
+        ).fetchall()
+        return [Event(**dict(row)) for row in rows]
+
+
+def get_event(event_id: int, db_path: Path | None = None) -> Event | None:
+    with connect(db_path) as conn:
+        row = conn.execute(
+            "SELECT * FROM match_events WHERE id = ?", (event_id,)
+        ).fetchone()
+        return Event(**dict(row)) if row is not None else None
+
+
+def update_note(
+    event_id: int,
+    text: str,
+    label: Label | None,
+    db_path: Path | None = None,
+) -> None:
+    """Rewrite an event's text and label. A bare mark made during recording
+    becomes a regular note once it has been filled in."""
+    with connect(db_path) as conn:
+        conn.execute(
+            "UPDATE match_events SET detail = ?, label = ?, kind = 'note' WHERE id = ?",
+            (text or None, label, event_id),
+        )
+
+
+def delete_event(event_id: int, db_path: Path | None = None) -> None:
+    with connect(db_path) as conn:
+        conn.execute("DELETE FROM match_events WHERE id = ?", (event_id,))
 
 
 @dataclass(frozen=True)

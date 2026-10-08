@@ -1,6 +1,90 @@
 {% extends "base.html" %}
 {% block title %}Matches — Pokémon TCG Live analyser{% endblock %}
 {% block content %}
+  <div class="panel" style="margin-bottom: 24px;">
+    {% if recording %}
+      <form method="post" action="/recording/stop" style="display: flex; align-items: center; gap: 12px;">
+        <span class="badge badge-loss">&#9679; Recording</span>
+        <span id="rec-elapsed" class="muted" data-started="{{ recording.started_at.isoformat() }}"></span>
+        <span class="muted" style="flex: 1;">{{ recording.video_path.name }}</span>
+        <button type="button" class="secondary" id="mark-button" title="Flag this moment to look at later (M)">Mark moment</button>
+        <button type="submit" class="stop">Stop recording</button>
+      </form>
+      <p class="muted" style="font-size: 0.85em; margin: 8px 0 0;">
+        <span id="mark-count">{{ marks }}</span> marked. Press <strong>M</strong> or the button while this page has
+        focus to flag a moment; it shows up on the timeline when you review the match.
+      </p>
+      <script>
+        const markCount = document.getElementById('mark-count');
+        async function markMoment() {
+          const resp = await fetch('/recording/mark', { method: 'POST' });
+          if (resp.ok) markCount.textContent = (await resp.json()).count;
+        }
+        document.getElementById('mark-button').addEventListener('click', (ev) => {
+          ev.currentTarget.blur();
+          markMoment();
+        });
+        document.addEventListener('keydown', (ev) => {
+          if (ev.key.toLowerCase() === 'm' && !ev.metaKey && !ev.ctrlKey && !ev.altKey) markMoment();
+        });
+
+        const el = document.getElementById('rec-elapsed');
+        const started = new Date(el.dataset.started);
+        function tick() {
+          const s = Math.max(0, Math.floor((Date.now() - started) / 1000));
+          el.textContent = Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
+        }
+        tick();
+        setInterval(tick, 1000);
+      </script>
+    {% elif devices %}
+      <form method="post" action="/recording/start" style="display: flex; align-items: center; gap: 12px;">
+        <strong style="flex: 1;">Record a match</strong>
+        {% if devices|length > 1 %}
+          <select name="device">
+            {% for d in devices %}<option value="{{ d.index }}">{{ d.name }}</option>{% endfor %}
+          </select>
+        {% endif %}
+        <button type="submit">Start recording</button>
+      </form>
+    {% else %}
+      <span class="muted">Recording unavailable: no screen capture device found (is ffmpeg installed?).</span>
+    {% endif %}
+  </div>
+
+  {% if not recording %}
+    <div class="panel{{ ' highlight' if selected_video else '' }}" style="margin-bottom: 24px;">
+      {% if selected_video %}
+        <strong>Recording saved &mdash; log the match</strong>
+        <p class="muted" style="margin: 4px 0 0;">Logging it takes you straight to the review page.</p>
+      {% else %}
+        <strong>Log a match</strong>
+      {% endif %}
+      <form class="inline" method="post" action="/matches" style="margin-bottom: 0;">
+        <input name="deck" placeholder="Your deck" list="known-decks" required {{ 'autofocus' if selected_video else '' }}>
+        <input name="opponent_deck" placeholder="Opponent deck" list="known-decks">
+        <select name="result" required>
+          <option value="win">Win</option>
+          <option value="loss">Loss</option>
+          <option value="tie">Tie</option>
+        </select>
+        <input name="notes" placeholder="Notes (optional)">
+        {% if unlogged %}
+          <select name="video_file">
+            <option value="">No recording</option>
+            {% for name in unlogged %}
+              <option value="{{ name }}" {{ 'selected' if name == selected_video else '' }}>{{ name }}</option>
+            {% endfor %}
+          </select>
+        {% endif %}
+        <button type="submit">Log match</button>
+      </form>
+      <datalist id="known-decks">
+        {% for d in known_decks %}<option value="{{ d }}">{% endfor %}
+      </datalist>
+    </div>
+  {% endif %}
+
   <h1>Matches</h1>
 
   {% if matches %}
@@ -23,17 +107,4 @@
   {% else %}
     <p class="muted">No matches logged yet.</p>
   {% endif %}
-
-  <h2>Log a match</h2>
-  <form class="inline" method="post" action="/matches">
-    <input name="deck" placeholder="Your deck" required>
-    <input name="opponent_deck" placeholder="Opponent deck">
-    <select name="result" required>
-      <option value="win">Win</option>
-      <option value="loss">Loss</option>
-      <option value="tie">Tie</option>
-    </select>
-    <input name="notes" placeholder="Notes (optional)">
-    <button type="submit">Log match</button>
-  </form>
 {% endblock %}

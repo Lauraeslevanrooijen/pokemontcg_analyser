@@ -1,9 +1,10 @@
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
 
-from pokemontcg_analyser import storage, webapp
+from pokemontcg_analyser import recorder, storage, webapp
 
 
 @pytest.fixture()
@@ -12,6 +13,11 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
     # dir), so these tests only exercise routes/data, not actual file
     # serving — swapping the db is enough for that.
     monkeypatch.setattr(storage, "DEFAULT_DB_PATH", tmp_path / "matches.db")
+    monkeypatch.setattr(webapp, "RECORDINGS_DIR", tmp_path / "recordings")
+    monkeypatch.setattr(webapp, "_recording", None)
+    monkeypatch.setattr(
+        webapp, "_screen_devices", [recorder.CaptureDevice(index=3, name="Capture screen 0")]
+    )
     return TestClient(webapp.app)
 
 
@@ -74,3 +80,263 @@ def test_add_note_round_trips(client: TestClient) -> None:
 def test_add_note_404_for_missing_match(client: TestClient) -> None:
     resp = client.post("/matches/999/notes", json={"text": "hi"})
     assert resp.status_code == 404
+
+
+class _FakeRecording:
+    def __init__(self, video_path: Path) -> None:
+        self.video_path = video_path
+        self.started_at = datetime.now(timezone.utc)
+        self.is_running = True
+
+    def mark(self) -> list[float]:
+        self.video_path.parent.mkdir(parents=True, exist_ok=True)
+        sidecar = self.video_path.with_suffix(".json")
+        if not sidecar.exists():
+            sidecar.write_text("{}")
+        return recorder.add_mark(self.video_path, 12.5)
+
+    def stop(self) -> Path:
+        self.is_running = False
+        self.video_path.parent.mkdir(parents=True, exist_ok=True)
+        self.video_path.write_bytes(b"")
+        return self.video_path
+
+
+def test_start_and_stop_recording(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    started_with = []
+
+    def fake_start(device_index: int, out_dir: Path) -> _FakeRecording:
+        started_with.append(device_index)
+        return _FakeRecording(out_dir / "2026-01-01_120000.mp4")
+
+    monkeypatch.setattr(recorder, "start_recording", fake_start)
+
+    resp = client.post("/recording/start", follow_redirects=False)
+    assert resp.status_code == 303
+    assert started_with == [3]
+    assert "Stop recording" in client.get("/").text
+    assert client.post("/recording/start", follow_redirects=False).status_code == 409
+
+    resp = client.post("/recording/stop", follow_redirects=False)
+    assert resp.status_code == 303
+    assert resp.headers["location"] == "/?video=2026-01-01_120000.mp4"
+
+    page = client.get(resp.headers["location"]).text
+    assert "Start recording" in page
+    assert 'value="2026-01-01_120000.mp4" selected' in page
+    assert "Recording saved" in page
+    assert page.index("Recording saved") < page.index("<h1>Matches</h1>")
+
+
+def test_stop_without_recording_is_409(client: TestClient) -> None:
+    assert client.post("/recording/stop", follow_redirects=False).status_code == 409
+
+
+def test_create_match_attaches_recording(client: TestClient) -> None:
+    webapp.RECORDINGS_DIR.mkdir()
+    (webapp.RECORDINGS_DIR / "game.mp4").write_bytes(b"")
+
+    resp = client.post(
+        "/matches",
+        data={"deck": "Slob", "result": "win", "video_file": "game.mp4"},
+        follow_redirects=False,
+    )
+
+    assert resp.status_code == 303
+    match = storage.list_matches()[0]
+    assert resp.headers["location"] == f"/matches/{match.id}"
+    assert Path(match.video_file).name == "game.mp4"
+    # once attached it is no longer offered for another match
+    assert 'value="game.mp4"' not in client.get("/").text
+
+
+def test_create_match_rejects_unknown_recording(client: TestClient) -> None:
+    resp = client.post(
+        "/matches",
+        data={"deck": "Slob", "result": "win", "video_file": "../data/matches.db"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 400
+
+
+def test_marks_made_while_recording_land_on_the_match(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        recorder,
+        "start_recording",
+        lambda device_index, out_dir: _FakeRecording(out_dir / "marked.mp4"),
+    )
+    assert client.post("/recording/mark").status_code == 409
+
+    client.post("/recording/start", follow_redirects=False)
+    assert client.post("/recording/mark").json() == {"count": 1}
+    assert client.post("/recording/mark").json() == {"count": 2}
+    client.post("/recording/stop", follow_redirects=False)
+    client.post(
+        "/matches",
+        data={"deck": "Slob", "result": "win", "video_file": "marked.mp4"},
+        follow_redirects=False,
+    )
+
+    events = storage.list_events(storage.list_matches()[0].id)
+    assert [(e.kind, e.video_offset_seconds) for e in events] == [("mark", 12.5), ("mark", 12.5)]
+
+
+def test_label_only_note_and_empty_note(client: TestClient) -> None:
+    match_id = storage.log_match(deck="Slob", result="win")
+
+    resp = client.post(
+        f"/matches/{match_id}/notes", json={"label": "misplay", "offset_seconds": 3.0}
+    )
+    assert resp.status_code == 200
+    assert resp.json()["label"] == "misplay"
+    assert resp.json()["detail"] is None
+
+    assert client.post(f"/matches/{match_id}/notes", json={"text": "  "}).status_code == 400
+    assert (
+        client.post(f"/matches/{match_id}/notes", json={"text": "x", "label": "nope"}).status_code
+        == 422
+    )
+
+
+def test_edit_and_delete_note(client: TestClient) -> None:
+    match_id = storage.log_match(deck="Slob", result="win")
+    note = client.post(
+        f"/matches/{match_id}/notes", json={"text": "tpyo", "offset_seconds": 1.0}
+    ).json()
+
+    resp = client.patch(f"/events/{note['id']}", json={"text": "typo fixed", "label": "good"})
+    assert resp.status_code == 200
+    assert resp.json()["detail"] == "typo fixed"
+    assert resp.json()["label"] == "good"
+    assert resp.json()["offset_seconds"] == 1.0
+
+    assert client.delete(f"/events/{note['id']}").status_code == 204
+    assert storage.list_events(match_id) == []
+    assert client.delete(f"/events/{note['id']}").status_code == 404
+
+
+def test_editing_a_mark_turns_it_into_a_note(client: TestClient) -> None:
+    match_id = storage.log_match(deck="Slob", result="win")
+    mark_id = storage.add_event(match_id, "mark", offset_seconds=40.0)
+
+    resp = client.patch(f"/events/{mark_id}", json={"text": "should have retreated"})
+
+    assert resp.json()["kind"] == "note"
+    assert resp.json()["offset_seconds"] == 40.0
+
+
+def test_turn_markers(client: TestClient) -> None:
+    match_id = storage.log_match(deck="Slob", result="win")
+
+    turn = client.post(f"/matches/{match_id}/turns", json={"offset_seconds": 30.0}).json()
+
+    assert turn["kind"] == "turn"
+    assert client.patch(f"/events/{turn['id']}", json={"text": "x"}).status_code == 400
+    assert client.delete(f"/events/{turn['id']}").status_code == 204
+
+
+def test_set_and_clear_turn_order(client: TestClient) -> None:
+    match_id = storage.log_match(deck="Slob", result="win")
+
+    resp = client.put(f"/matches/{match_id}/turn-order", json={"turn_order": "second"})
+    assert resp.status_code == 200
+    assert storage.get_match(match_id).turn_order == "second"
+    assert 'let turnOrder = "second";' in client.get(f"/matches/{match_id}").text
+
+    client.put(f"/matches/{match_id}/turn-order", json={"turn_order": None})
+    assert storage.get_match(match_id).turn_order is None
+
+    assert (
+        client.put(f"/matches/{match_id}/turn-order", json={"turn_order": "third"}).status_code
+        == 422
+    )
+    assert client.put("/matches/999/turn-order", json={"turn_order": "first"}).status_code == 404
+
+
+def test_game_start_and_trim_shift_the_timeline(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    webapp.RECORDINGS_DIR.mkdir()
+    (webapp.RECORDINGS_DIR / "game.mp4").write_bytes(b"")
+    match_id = storage.log_match(deck="Slob", result="win", video_file="recordings/game.mp4")
+    storage.add_note(match_id, "in the menu", offset_seconds=10.0)
+    storage.add_note(match_id, "first attack", offset_seconds=100.0)
+
+    assert client.post(f"/matches/{match_id}/trim").status_code == 400  # no game start yet
+
+    resp = client.put(f"/matches/{match_id}/game-start", json={"offset_seconds": 62.0})
+    assert resp.status_code == 200
+    assert storage.get_match(match_id).game_start_seconds == 62.0
+
+    trimmed = []
+
+    def fake_trim(video_path: Path, start_seconds: float) -> float:
+        trimmed.append((video_path.name, start_seconds))
+        return 60.0  # the keyframe before the requested start
+
+    monkeypatch.setattr(recorder, "trim_start", fake_trim)
+
+    resp = client.post(f"/matches/{match_id}/trim")
+
+    assert resp.json() == {"removed_seconds": 60.0}
+    assert trimmed == [("game.mp4", 62.0)]
+    assert storage.get_match(match_id).game_start_seconds == 2.0
+    assert [e.video_offset_seconds for e in storage.list_events(match_id)] == [0.0, 40.0]
+
+
+def test_voice_note_is_stored_served_and_deleted(client: TestClient) -> None:
+    match_id = storage.log_match(deck="Slob", result="win")
+
+    resp = client.post(
+        f"/matches/{match_id}/voice",
+        files={"audio": ("note", b"fake-opus-bytes", "audio/webm;codecs=opus")},
+        data={"offset_seconds": "42.5"},
+    )
+
+    assert resp.status_code == 200
+    note = resp.json()
+    assert note["kind"] == "note"
+    assert note["offset_seconds"] == 42.5
+    name = note["audio_url"].removeprefix("/media/voice/")
+    stored = webapp.RECORDINGS_DIR / "voice" / name
+    assert stored.read_bytes() == b"fake-opus-bytes"
+
+    # a spoken note needs no text, but can be given a label afterwards
+    resp = client.patch(f"/events/{note['id']}", json={"text": "", "label": "misplay"})
+    assert resp.status_code == 200
+    assert resp.json()["audio_url"] == note["audio_url"]
+
+    assert client.delete(f"/events/{note['id']}").status_code == 204
+    assert not stored.exists()
+
+
+def test_voice_note_rejects_non_audio(client: TestClient) -> None:
+    match_id = storage.log_match(deck="Slob", result="win")
+
+    resp = client.post(
+        f"/matches/{match_id}/voice",
+        files={"audio": ("note", b"<html>", "text/html")},
+    )
+
+    assert resp.status_code == 400
+    assert storage.list_events(match_id) == []
+
+
+def test_stats_and_moments_pages(client: TestClient) -> None:
+    assert "No matches logged yet" in client.get("/stats").text
+
+    match_id = storage.log_match(deck="Pult", opponent_deck="Iono", result="win")
+    storage.add_note(match_id, "wrong attacker", offset_seconds=70.5, label="misplay")
+
+    stats = client.get("/stats").text
+    assert "Pult vs Iono" in stats
+    assert "100%" in stats
+
+    page = client.get("/moments").text
+    assert "wrong attacker" in page
+    assert f"/matches/{match_id}?t=70.50" in page
+    assert "wrong attacker" not in client.get("/moments?label=good").text
+    assert "wrong attacker" in client.get("/moments?label=all").text
+    assert client.get("/moments?label=nope").status_code == 404

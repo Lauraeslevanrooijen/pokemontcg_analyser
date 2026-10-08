@@ -15,3 +15,5 @@ recordings/
 *.mov
 data/cards.json
 data/*.db
+data/app-profile/
+data/app.log

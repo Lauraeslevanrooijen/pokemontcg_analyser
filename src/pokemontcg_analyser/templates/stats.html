@@ -1,0 +1,111 @@
+{% extends "base.html" %}
+{% block title %}Stats — Pokémon TCG Live analyser{% endblock %}
+{% macro record_row(name, r) %}
+  <tr>
+    <td>{{ name }}</td>
+    <td class="num">{{ r.total }}</td>
+    <td class="num">{{ r.wins }}&ndash;{{ r.losses }}&ndash;{{ r.ties }}</td>
+    <td class="num">{{ '%.0f%%' % (r.win_rate * 100) }}</td>
+    <td style="width: 30%;"><span class="bar" style="width: {{ '%.0f' % (r.win_rate * 100) }}%;"></span></td>
+  </tr>
+{% endmacro %}
+{% macro record_head(first) %}
+  <thead><tr><th>{{ first }}</th><th class="num">Games</th><th class="num">W&ndash;L&ndash;T</th><th class="num">Win rate</th><th></th></tr></thead>
+{% endmacro %}
+{% block content %}
+  <h1>Stats</h1>
+  {% if not stats.overall.total %}
+    <p class="muted">No matches logged yet.</p>
+  {% else %}
+    <p>
+      <strong>{{ stats.overall.wins }}&ndash;{{ stats.overall.losses }}&ndash;{{ stats.overall.ties }}</strong>
+      over {{ stats.overall.total }} {{ 'game' if stats.overall.total == 1 else 'games' }}
+      &middot; {{ '%.0f%%' % (stats.overall.win_rate * 100) }} win rate
+    </p>
+
+    <h2>By deck</h2>
+    <table>
+      {{ record_head('Deck') }}
+      <tbody>
+        {% for deck, r in stats.by_deck|dictsort %}{{ record_row(deck, r) }}{% endfor %}
+      </tbody>
+    </table>
+
+    <h2>By matchup</h2>
+    <table>
+      {{ record_head('Matchup') }}
+      <tbody>
+        {% for (deck, opponent), r in stats.by_matchup|dictsort %}{{ record_row(deck ~ ' vs ' ~ opponent, r) }}{% endfor %}
+      </tbody>
+    </table>
+
+    <h2>Going first or second</h2>
+    <table>
+      {{ record_head('I went') }}
+      <tbody>
+        {% for key, name in [('first', 'First'), ('second', 'Second'), ('unknown', 'Not noted')] %}
+          {% if key in stats.by_turn_order %}{{ record_row(name, stats.by_turn_order[key]) }}{% endif %}
+        {% endfor %}
+      </tbody>
+    </table>
+
+    <h2>From your reviews</h2>
+    {% if not stats.reviewed_matches %}
+      <p class="muted">Nothing here until a match has notes.</p>
+    {% else %}
+      <p class="muted">
+        Based on the {{ stats.reviewed_matches }} {{ 'game' if stats.reviewed_matches == 1 else 'games' }} you have added notes to.
+      </p>
+      <table>
+        <thead><tr><th>Label</th><th class="num">Moments</th><th class="num">Per reviewed game</th><th></th></tr></thead>
+        <tbody>
+          {% for key, name in labels.items() %}
+            <tr>
+              <td><a class="chip label-{{ key }}" href="/moments?label={{ key }}">{{ name }}</a></td>
+              <td class="num">{{ stats.label_counts[key] }}</td>
+              <td class="num">{{ '%.1f' % (stats.label_counts[key] / stats.reviewed_matches) }}</td>
+              <td style="width: 30%;"></td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+
+      <h2>Misplays</h2>
+      <table>
+        <thead><tr><th>Result</th><th class="num">Reviewed games</th><th class="num">Misplays</th><th class="num">Per game</th><th></th></tr></thead>
+        <tbody>
+          {% for result in ['win', 'loss', 'tie'] %}
+            {% if result in stats.misplays_by_result %}
+              {% set count, games = stats.misplays_by_result[result] %}
+              <tr>
+                <td><span class="badge badge-{{ result }}">{{ result }}</span></td>
+                <td class="num">{{ games }}</td>
+                <td class="num">{{ count }}</td>
+                <td class="num">{{ '%.1f' % (count / games) }}</td>
+                <td style="width: 30%;"></td>
+              </tr>
+            {% endif %}
+          {% endfor %}
+        </tbody>
+      </table>
+
+      {% if stats.misplays_by_turn %}
+        {% set most = stats.misplays_by_turn.values()|max %}
+        <h2>Misplays by turn</h2>
+        <p class="muted">Only games with turn markers count here.</p>
+        <table>
+          <thead><tr><th>Turn</th><th class="num">Misplays</th><th></th></tr></thead>
+          <tbody>
+            {% for turn, count in stats.misplays_by_turn.items() %}
+              <tr>
+                <td>Turn {{ turn }}</td>
+                <td class="num">{{ count }}</td>
+                <td style="width: 60%;"><span class="bar" style="width: {{ '%.0f' % (count / most * 100) }}%; background: var(--loss);"></span></td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      {% endif %}
+    {% endif %}
+  {% endif %}
+{% endblock %}

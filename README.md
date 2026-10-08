@@ -13,15 +13,24 @@ Early scaffold. Working today:
 - `matches` — log match metadata (deck, opponent deck, result) to a local
   SQLite database, list/summarise your stats, and attach timestamped notes
   to a match for later review.
-- `analyze` — extract frames from a recorded video and detect scene changes
-  (candidate turn/board-state boundaries) as a first pass at an event
-  timeline.
 - `cards sync` — pull the card database from the public
   [pokemontcg.io](https://pokemontcg.io) API and cache it locally, as the
   foundation for card recognition.
-- `serve` — a local web app for reviewing a recording: play the video and
-  drop timestamped notes on it as you watch, without switching to a
-  terminal.
+- `serve` — a local web app: start and stop a recording with a button (and
+  flag moments while it runs), log the match against it, then play the video
+  back and annotate it: labelled notes (misplay, good play, key moment, bad
+  luck), turn markers, who went first, and keyboard shortcuts so you never
+  leave the video. Spoken notes are recorded with the microphone and
+  stored in `recordings/voice/`. Mark where the game itself starts and trim
+  the menus before it off the recording (the untrimmed file is kept in
+  `recordings/originals/` for 14 days, then deleted).
+- Stats and Moments pages in the web app: win rates per deck, per matchup
+  and by going first or second, misplays per reviewed game and per turn, and
+  every labelled moment across all matches with a link to that point in the
+  video.
+- `app` / `install-app` — run the same thing as a desktop app in its own
+  window instead of a browser tab, and install a double-clickable launcher
+  in `~/Applications`.
 
 Not built yet: actual card recognition (matching video frames to specific
 cards) and automatic win/loss detection — both need real recorded footage to
@@ -54,20 +63,22 @@ pokemontcg-analyser matches stats
 
 # Jot a note at a specific moment in the recording (or omit --offset for a
 # whole-match note, e.g. a post-game reflection)
-pokemontcg-analyser matches annotate --match-id 1 --text "misplayed retreat here" --offset 245.5
+pokemontcg-analyser matches annotate --match-id 1 --text "misplayed retreat here" --offset 245.5 --label misplay
 
-# Review a match's notes alongside its detected scene changes
+# Review a match's notes
 pokemontcg-analyser matches notes 1
 
 # Pull the card database (for future card recognition)
 pokemontcg-analyser cards sync
 
-# Analyze a recording for scene-change boundaries
-pokemontcg-analyser analyze recordings/2026-09-27_190000.mp4
-
-# Open the review app (watch a recording + take notes in the browser)
+# Open the web app (record a match, watch it back + take notes in the browser)
 pokemontcg-analyser serve
 # -> http://127.0.0.1:8000
+
+# Or as a desktop app: install once, then start "Pokemon TCG Analyser" from
+# Spotlight/Launchpad. Quit with Cmd+Q; that also stops the server.
+# Run this from the project folder — the app keeps its data here.
+pokemontcg-analyser install-app
 ```
 
 ## Project layout
@@ -77,8 +88,10 @@ src/pokemontcg_analyser/
   recorder.py   screen capture (ffmpeg/avfoundation)
   cards.py      pokemontcg.io client + local card cache
   storage.py    SQLite schema + match logging/stats
-  analysis.py   frame extraction + scene-change detection
+  analysis.py   frame extraction
   webapp.py     local review app (FastAPI + Jinja2 templates)
+  insights.py   cross-match stats and labelled moments
+  desktop.py    desktop-app window + macOS .app launcher
   templates/    review app HTML
   cli.py        command-line entry point
 tests/

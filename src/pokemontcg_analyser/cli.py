@@ -7,7 +7,7 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from . import analysis, cards, recorder, storage
+from . import cards, desktop, recorder, storage
 
 app = typer.Typer(help="Record and analyse your own Pokémon TCG Live matches.")
 matches_app = typer.Typer(help="Log and review match results.")
@@ -46,37 +46,6 @@ def record(
         device_index=device, out_dir=out, framerate=framerate, max_width=max_width
     )
     console.print(f"Saved recording: {video_path}")
-
-
-@app.command()
-def analyze(
-    video: Path = typer.Argument(..., help="Path to a recorded video"),
-    sample_fps: float = typer.Option(2.0, help="Frames per second to sample"),
-    threshold: float = typer.Option(12.0, help="Scene-change sensitivity"),
-    match_id: Optional[int] = typer.Option(
-        None, help="Attach detected events to this match id"
-    ),
-) -> None:
-    """Detect candidate scene changes (turn/board-state boundaries) in a video."""
-    changes = analysis.detect_scene_changes(
-        video, sample_fps=sample_fps, threshold=threshold
-    )
-    if not changes:
-        console.print("No scene changes detected above threshold.")
-        return
-
-    table = Table("Offset (s)", "Score")
-    for c in changes:
-        table.add_row(f"{c.offset_seconds:.2f}", f"{c.score:.1f}")
-    console.print(table)
-    console.print(f"{len(changes)} candidate boundaries detected.")
-
-    if match_id is not None:
-        events = [
-            (c.offset_seconds, "scene_change", f"score={c.score:.1f}") for c in changes
-        ]
-        storage.add_events(match_id, events)
-        console.print(f"Attached {len(events)} events to match {match_id}.")
 
 
 @matches_app.command("log")
@@ -143,24 +112,26 @@ def matches_annotate(
     offset: Optional[float] = typer.Option(
         None, "--offset", help="Position in the recording, in seconds"
     ),
+    label: Optional[storage.Label] = typer.Option(None, "--label"),
 ) -> None:
     """Add a timestamped note to a match."""
-    storage.add_note(match_id, text, offset_seconds=offset)
+    storage.add_note(match_id, text, offset_seconds=offset, label=label)
     where = f"at {offset:.1f}s" if offset is not None else "on the match overall"
     console.print(f"Noted {where} for match {match_id}.")
 
 
 @matches_app.command("notes")
 def matches_notes(match_id: int = typer.Argument(...)) -> None:
-    """List a match's notes and detected events in chronological order."""
+    """List a match's notes and turn markers in chronological order."""
     events = storage.list_events(match_id)
     if not events:
-        console.print("No notes or events for this match yet.")
+        console.print("No notes for this match yet.")
         return
     table = Table("Offset (s)", "Kind", "Detail")
     for e in events:
         offset = f"{e.video_offset_seconds:.2f}" if e.video_offset_seconds is not None else "-"
-        table.add_row(offset, e.kind, e.detail or "")
+        kind = f"{e.kind} ({storage.LABELS[e.label]})" if e.label else e.kind
+        table.add_row(offset, kind, e.detail or "")
     console.print(table)
 
 
@@ -173,6 +144,29 @@ def serve(
 
     console.print(f"Serving on http://127.0.0.1:{port} (Ctrl+C to stop)")
     uvicorn.run("pokemontcg_analyser.webapp:app", host="127.0.0.1", port=port)
+
+
+@app.command("app")
+def desktop_app(
+    port: int = typer.Option(8000, "--port"),
+    data_dir: Optional[Path] = typer.Option(
+        None, "--data-dir", help="Folder holding data/ and recordings/ (default: current)"
+    ),
+) -> None:
+    """Run as a desktop app: its own window, quitting it stops the server."""
+    desktop.run(port=port, data_dir=data_dir)
+
+
+@app.command("install-app")
+def install_app(
+    port: int = typer.Option(8000, "--port"),
+    data_dir: Path = typer.Option(
+        Path("."), "--data-dir", help="Folder holding data/ and recordings/"
+    ),
+) -> None:
+    """Create a double-clickable macOS app in ~/Applications."""
+    bundle = desktop.install_app(data_dir=data_dir, port=port)
+    console.print(f"Installed {bundle}")
 
 
 @cards_app.command("sync")

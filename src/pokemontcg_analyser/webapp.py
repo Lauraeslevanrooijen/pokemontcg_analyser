@@ -1,4 +1,5 @@
-"""Local review app: watch a recorded match and drop timestamped notes on it.
+"""Local review app: record a match, watch it back and drop timestamped
+notes on it.
 
 Runs on 127.0.0.1 only — this serves your own recorded gameplay, no reason
 to expose it beyond localhost. `/media` is scoped to the recordings folder
@@ -8,20 +9,45 @@ data/matches.db or source over HTTP.
 
 from __future__ import annotations
 
+import subprocess
+import uuid
+from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, Form, HTTPException, Request
-from fastapi.responses import RedirectResponse
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi.responses import RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 
-from . import analysis, storage
+from . import insights, recorder, storage
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
 RECORDINGS_DIR = Path("recordings")
+VOICE_DIRNAME = "voice"
+# Untrimmed recordings set aside by trimming are deleted after this long.
+ORIGINALS_RETENTION_DAYS = 14
+MAX_VOICE_NOTE_BYTES = 25 * 1024 * 1024
+# What browsers' MediaRecorder produces, by container.
+VOICE_EXTENSIONS = {"audio/webm": "webm", "audio/mp4": "m4a", "audio/ogg": "ogg"}
 
-app = FastAPI(title="Pokémon TCG Live analyser")
+# The one recording in progress, if any. Screen capture is a single shared
+# resource and this app is a single local process, so module state is enough.
+_recording: recorder.Recording | None = None
+_screen_devices: list[recorder.CaptureDevice] | None = None
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    recorder.purge_originals(RECORDINGS_DIR, ORIGINALS_RETENTION_DAYS)
+    yield
+    # Don't leave an unfinalized (unplayable) MP4 behind if the server is
+    # stopped mid-recording.
+    if _recording is not None:
+        _recording.stop()
+
+
+app = FastAPI(title="Pokémon TCG Live analyser", lifespan=lifespan)
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
 RECORDINGS_DIR.mkdir(exist_ok=True)
@@ -34,12 +60,115 @@ def db_path() -> Path:
     return storage.DEFAULT_DB_PATH
 
 
+def screen_devices() -> list[recorder.CaptureDevice]:
+    """Screens that can be recorded; looked up once, since it shells out."""
+    global _screen_devices
+    if _screen_devices is None:
+        try:
+            _screen_devices = recorder.screen_devices()
+        except recorder.FfmpegNotFoundError:
+            return []
+    return _screen_devices
+
+
+def active_recording() -> recorder.Recording | None:
+    return _recording if _recording is not None and _recording.is_running else None
+
+
+def unlogged_recordings(matches: list[storage.Match]) -> list[str]:
+    """Recordings no match points at yet, newest first."""
+    logged = {Path(m.video_file).name for m in matches if m.video_file}
+    active = active_recording()
+    if active is not None:
+        logged.add(active.video_path.name)
+    names = [p.name for p in RECORDINGS_DIR.glob("*.mp4") if p.name not in logged]
+    return sorted(names, reverse=True)
+
+
 @app.get("/")
-def index(request: Request):
+def index(request: Request, video: str | None = None):
     matches = storage.list_matches(db_path=db_path())
+    recording = active_recording()
+    # The app can stay open for days, so don't rely on startup alone.
+    recorder.purge_originals(RECORDINGS_DIR, ORIGINALS_RETENTION_DAYS)
     return templates.TemplateResponse(
-        request, "index.html", {"matches": matches}
+        request,
+        "index.html",
+        {
+            "matches": matches,
+            "recording": recording,
+            "marks": len(recorder.read_marks(recording.video_path)) if recording else 0,
+            "devices": screen_devices(),
+            "unlogged": unlogged_recordings(matches),
+            "selected_video": video,
+            "known_decks": sorted(
+                {d for m in matches for d in (m.deck, m.opponent_deck) if d}
+            ),
+        },
     )
+
+
+@app.get("/stats")
+def stats(request: Request):
+    matches = storage.list_matches(db_path=db_path())
+    events = storage.list_all_events(db_path=db_path())
+    return templates.TemplateResponse(
+        request,
+        "stats.html",
+        {"stats": insights.build(matches, events), "labels": storage.LABELS},
+    )
+
+
+@app.get("/moments")
+def moments(request: Request, label: str = "misplay"):
+    if label != "all" and label not in storage.LABELS:
+        raise HTTPException(status_code=404, detail="Unknown label")
+    matches = storage.list_matches(db_path=db_path())
+    events = storage.list_all_events(db_path=db_path())
+    return templates.TemplateResponse(
+        request,
+        "moments.html",
+        {
+            "moments": insights.moments(matches, events, None if label == "all" else label),
+            "labels": storage.LABELS,
+            "selected": label,
+        },
+    )
+
+
+@app.post("/recording/start")
+def start_recording(device: int | None = Form(None)):
+    global _recording
+    if active_recording() is not None:
+        raise HTTPException(status_code=409, detail="Already recording")
+    if device is None:
+        devices = screen_devices()
+        if not devices:
+            raise HTTPException(status_code=400, detail="No screen to record found")
+        device = devices[0].index
+    try:
+        _recording = recorder.start_recording(device, RECORDINGS_DIR)
+    except (RuntimeError, OSError) as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+    return RedirectResponse("/", status_code=303)
+
+
+@app.post("/recording/mark")
+def mark_recording():
+    recording = active_recording()
+    if recording is None:
+        raise HTTPException(status_code=409, detail="Not recording")
+    return {"count": len(recording.mark())}
+
+
+@app.post("/recording/stop")
+def stop_recording():
+    global _recording
+    if _recording is None:
+        raise HTTPException(status_code=409, detail="Not recording")
+    video_path = _recording.stop()
+    _recording = None
+    return RedirectResponse(f"/?video={video_path.name}", status_code=303)
 
 
 @app.post("/matches")
@@ -48,15 +177,30 @@ def create_match(
     opponent_deck: str = Form(""),
     result: storage.Result = Form(...),
     notes: str = Form(""),
+    video_file: str = Form(""),
 ):
-    storage.log_match(
+    video_path = None
+    if video_file:
+        # Only a bare filename inside the recordings folder is accepted.
+        video_path = RECORDINGS_DIR / Path(video_file).name
+        if not video_path.is_file():
+            raise HTTPException(status_code=400, detail="Unknown recording")
+    match_id = storage.log_match(
         deck=deck,
         result=result,
         opponent_deck=opponent_deck or None,
         notes=notes or None,
+        video_file=str(video_path) if video_path else None,
         db_path=db_path(),
     )
-    return RedirectResponse("/", status_code=303)
+    if video_path:
+        storage.add_events(
+            match_id,
+            [(offset, "mark", None) for offset in recorder.read_marks(video_path)],
+            db_path=db_path(),
+        )
+    # With a recording attached the next thing to do is watch it back.
+    return RedirectResponse(f"/matches/{match_id}" if video_path else "/", status_code=303)
 
 
 @app.get("/matches/{match_id}")
@@ -66,45 +210,173 @@ def match_detail(request: Request, match_id: int):
         raise HTTPException(status_code=404, detail="Match not found")
     events = storage.list_events(match_id, db_path=db_path())
     video_filename = Path(match.video_file).name if match.video_file else None
+    # Trimming rewrites the file under the same name; the version in the URL
+    # keeps the browser from playing its cached copy of the old one.
+    video_version = 0
+    if video_filename and (RECORDINGS_DIR / video_filename).is_file():
+        video_version = int((RECORDINGS_DIR / video_filename).stat().st_mtime)
     return templates.TemplateResponse(
         request,
         "match.html",
-        {"match": match, "events": events, "video_filename": video_filename},
+        {
+            "match": match,
+            "events": [_event_json(e) for e in events],
+            "labels": storage.LABELS,
+            "video_filename": video_filename,
+            "video_version": video_version,
+            "retention_days": ORIGINALS_RETENTION_DAYS,
+        },
     )
 
 
-@app.post("/matches/{match_id}/analyze")
-def analyze_match(match_id: int):
+def _event_json(event: storage.Event) -> dict:
+    return {
+        "id": event.id,
+        "kind": event.kind,
+        "offset_seconds": event.video_offset_seconds,
+        "detail": event.detail,
+        "label": event.label,
+        "audio_url": f"/media/{VOICE_DIRNAME}/{event.audio_file}" if event.audio_file else None,
+    }
+
+
+def _require_match(match_id: int) -> storage.Match:
     match = storage.get_match(match_id, db_path=db_path())
     if match is None:
         raise HTTPException(status_code=404, detail="Match not found")
-    if not match.video_file:
-        raise HTTPException(status_code=400, detail="Match has no recording")
-    changes = analysis.detect_scene_changes(Path(match.video_file))
-    storage.add_events(
-        match_id,
-        [(c.offset_seconds, "scene_change", f"score={c.score:.1f}") for c in changes],
-        db_path=db_path(),
-    )
-    return RedirectResponse(f"/matches/{match_id}", status_code=303)
+    return match
+
+
+def _require_event(event_id: int) -> storage.Event:
+    event = storage.get_event(event_id, db_path=db_path())
+    if event is None:
+        raise HTTPException(status_code=404, detail="Event not found")
+    return event
+
+
+class TurnOrderIn(BaseModel):
+    turn_order: storage.TurnOrder | None = None
+
+
+@app.put("/matches/{match_id}/turn-order")
+def set_turn_order(match_id: int, body: TurnOrderIn):
+    _require_match(match_id)
+    storage.set_turn_order(match_id, body.turn_order, db_path=db_path())
+    return {"turn_order": body.turn_order}
+
+
+class GameStartIn(BaseModel):
+    offset_seconds: float | None = None
+
+
+@app.put("/matches/{match_id}/game-start")
+def set_game_start(match_id: int, body: GameStartIn):
+    _require_match(match_id)
+    storage.set_game_start(match_id, body.offset_seconds, db_path=db_path())
+    return {"game_start_seconds": body.offset_seconds}
+
+
+@app.post("/matches/{match_id}/trim")
+def trim_to_game_start(match_id: int):
+    """Cut the part of the recording before the game start off the file."""
+    match = _require_match(match_id)
+    if not match.video_file or match.game_start_seconds is None:
+        raise HTTPException(status_code=400, detail="Set the game start first")
+    video_path = RECORDINGS_DIR / Path(match.video_file).name
+    active = active_recording()
+    if active is not None and active.video_path.name == video_path.name:
+        raise HTTPException(status_code=409, detail="Still recording this video")
+    try:
+        removed = recorder.trim_start(video_path, match.game_start_seconds)
+    except (OSError, subprocess.CalledProcessError, ValueError) as exc:
+        raise HTTPException(status_code=500, detail=f"Trimming failed: {exc}")
+    storage.shift_offsets(match_id, removed, db_path=db_path())
+    return {"removed_seconds": removed}
 
 
 class NoteIn(BaseModel):
-    text: str
+    text: str = ""
     offset_seconds: float | None = None
+    label: storage.Label | None = None
+
+
+class TurnIn(BaseModel):
+    offset_seconds: float
 
 
 @app.post("/matches/{match_id}/notes")
 def add_note(match_id: int, note: NoteIn):
-    match = storage.get_match(match_id, db_path=db_path())
-    if match is None:
-        raise HTTPException(status_code=404, detail="Match not found")
+    _require_match(match_id)
+    text = note.text.strip()
+    if not text and note.label is None:
+        raise HTTPException(status_code=400, detail="A note needs text or a label")
     event_id = storage.add_note(
-        match_id, note.text, offset_seconds=note.offset_seconds, db_path=db_path()
+        match_id,
+        text,
+        offset_seconds=note.offset_seconds,
+        label=note.label,
+        db_path=db_path(),
     )
-    return {
-        "id": event_id,
-        "offset_seconds": note.offset_seconds,
-        "kind": "note",
-        "detail": note.text,
-    }
+    return _event_json(_require_event(event_id))
+
+
+@app.post("/matches/{match_id}/voice")
+async def add_voice_note(
+    match_id: int,
+    audio: UploadFile = File(...),
+    offset_seconds: float | None = Form(None),
+):
+    """Save a spoken note recorded in the browser."""
+    _require_match(match_id)
+    container = (audio.content_type or "").split(";")[0].strip().lower()
+    extension = VOICE_EXTENSIONS.get(container)
+    if extension is None:
+        raise HTTPException(status_code=400, detail="Not an audio recording")
+    data = await audio.read(MAX_VOICE_NOTE_BYTES + 1)
+    if not data:
+        raise HTTPException(status_code=400, detail="Empty recording")
+    if len(data) > MAX_VOICE_NOTE_BYTES:
+        raise HTTPException(status_code=413, detail="Voice note too long")
+
+    voice_dir = RECORDINGS_DIR / VOICE_DIRNAME
+    voice_dir.mkdir(parents=True, exist_ok=True)
+    filename = f"{match_id}-{uuid.uuid4().hex[:12]}.{extension}"
+    (voice_dir / filename).write_bytes(data)
+    event_id = storage.add_event(
+        match_id,
+        "note",
+        offset_seconds=offset_seconds,
+        audio_file=filename,
+        db_path=db_path(),
+    )
+    return _event_json(_require_event(event_id))
+
+
+@app.post("/matches/{match_id}/turns")
+def add_turn(match_id: int, turn: TurnIn):
+    _require_match(match_id)
+    event_id = storage.add_event(
+        match_id, "turn", offset_seconds=turn.offset_seconds, db_path=db_path()
+    )
+    return _event_json(_require_event(event_id))
+
+
+@app.patch("/events/{event_id}")
+def edit_event(event_id: int, note: NoteIn):
+    event = _require_event(event_id)
+    if event.kind == "turn":
+        raise HTTPException(status_code=400, detail="Turn markers have no text")
+    text = note.text.strip()
+    if not text and note.label is None and not event.audio_file:
+        raise HTTPException(status_code=400, detail="A note needs text or a label")
+    storage.update_note(event_id, text, note.label, db_path=db_path())
+    return _event_json(_require_event(event_id))
+
+
+@app.delete("/events/{event_id}")
+def delete_event(event_id: int):
+    event = _require_event(event_id)
+    storage.delete_event(event_id, db_path=db_path())
+    if event.audio_file:
+        (RECORDINGS_DIR / VOICE_DIRNAME / Path(event.audio_file).name).unlink(missing_ok=True)
+    return Response(status_code=204)

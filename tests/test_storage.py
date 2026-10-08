@@ -74,3 +74,30 @@ def test_add_note_isolated_to_match(tmp_path: Path) -> None:
 
     assert len(storage.list_events(match1, db_path=db_path)) == 1
     assert len(storage.list_events(match2, db_path=db_path)) == 0
+
+
+def test_label_column_is_added_to_an_older_database(tmp_path: Path) -> None:
+    import sqlite3
+
+    db = tmp_path / "old.db"
+    conn = sqlite3.connect(db)
+    conn.executescript(
+        """
+        CREATE TABLE matches (id INTEGER PRIMARY KEY AUTOINCREMENT, played_at_utc TEXT NOT NULL,
+            deck TEXT NOT NULL, opponent_deck TEXT, result TEXT NOT NULL, notes TEXT, video_file TEXT);
+        CREATE TABLE match_events (id INTEGER PRIMARY KEY AUTOINCREMENT, match_id INTEGER NOT NULL,
+            video_offset_seconds REAL, kind TEXT NOT NULL, detail TEXT);
+        INSERT INTO matches VALUES (1, '2026-01-01T00:00:00+00:00', 'Slob', NULL, 'win', NULL, NULL);
+        INSERT INTO match_events VALUES (1, 1, 5.0, 'note', 'old note');
+        """
+    )
+    conn.commit()
+    conn.close()
+
+    storage.add_note(1, "new note", offset_seconds=9.0, label="key", db_path=db)
+
+    events = storage.list_events(1, db_path=db)
+    assert [(e.detail, e.label) for e in events] == [("old note", None), ("new note", "key")]
+
+    storage.set_turn_order(1, "first", db_path=db)
+    assert storage.get_match(1, db_path=db).turn_order == "first"

@@ -1,170 +1,721 @@
 {% extends "base.html" %}
 {% block title %}{{ match.deck }} vs {{ match.opponent_deck or '?' }} — Pokémon TCG Live analyser{% endblock %}
+{% block main_class %}wide{% endblock %}
 {% block content %}
+  <style>
+    .review { display: grid; gap: 24px; grid-template-columns: minmax(0, 1fr); align-items: start; }
+    @media (min-width: 1100px) {
+      .review { grid-template-columns: minmax(0, 1fr) 360px; }
+      .timeline { position: sticky; top: 24px; max-height: calc(100vh - 48px); overflow-y: auto; }
+    }
+
+    .scrubber { position: relative; margin-top: 10px; height: 28px; }
+    .scrubber input[type="range"] {
+      width: 100%; margin: 0; padding: 0; border: none; position: absolute; top: 8px; height: 12px;
+      -webkit-appearance: none; appearance: none; background: transparent; z-index: 2;
+    }
+    .scrubber input[type="range"]::-webkit-slider-runnable-track {
+      height: 4px; background: var(--border); border-radius: 2px;
+    }
+    .scrubber input[type="range"]::-webkit-slider-thumb {
+      -webkit-appearance: none; margin-top: -6px;
+      width: 16px; height: 16px; border-radius: 50%;
+      background: var(--text); cursor: pointer; border: 2px solid var(--bg);
+    }
+    .scrub-markers { position: absolute; top: 8px; left: 0; right: 0; height: 4px; pointer-events: none; }
+    .scrub-marker {
+      position: absolute; top: -4px; width: 4px; height: 12px; border-radius: 1px; z-index: 3;
+      background: var(--text); cursor: pointer; pointer-events: auto; transform: translateX(-2px);
+    }
+    .scrub-marker.turn { width: 1px; top: -8px; height: 20px; background: var(--muted); transform: none; z-index: 1; }
+    .scrub-marker.mark { background: var(--muted); border-radius: 50%; height: 6px; width: 6px; top: -1px; transform: translateX(-3px); }
+
+    .composer { margin-top: 12px; }
+    .composer-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+    .composer-row + .composer-row { margin-top: 8px; }
+    .composer input { flex: 1; min-width: 200px; }
+    .hints { font-size: 0.8em; margin: 10px 0 0; }
+    kbd {
+      font-family: inherit; font-size: 0.9em; padding: 1px 5px; border-radius: 4px;
+      border: 1px solid var(--border); background: var(--bg); color: var(--text);
+    }
+
+    button.chip { cursor: pointer; padding: 6px 12px; font-size: 0.9em; border-color: color-mix(in srgb, var(--c) 45%, transparent); }
+    button.chip:hover { filter: none; background: color-mix(in srgb, var(--c) 38%, transparent); }
+    {% for key in labels %}
+    .scrub-marker.label-{{ key }} { background: var(--c); }
+    {% endfor %}
+
+    .turn-order { display: flex; align-items: center; gap: 10px; margin: -8px 0 16px; }
+    .segmented { display: inline-flex; }
+    .segmented button { border-radius: 0; padding: 4px 14px; }
+    .segmented button:first-child { border-radius: 6px 0 0 6px; }
+    .segmented button:last-child { border-radius: 0 6px 6px 0; border-left: none; }
+    .segmented button[aria-pressed="true"] { background: var(--accent); color: #1a1a1a; border-color: var(--accent); }
+    .tl-turn .who { color: var(--text); }
+    .tl-turn.game-start { color: var(--win); border-bottom-color: color-mix(in srgb, var(--win) 50%, transparent); }
+    .tl-turn.game-start .tl-actions { opacity: 1; }
+    .tl-turn.game-start .trim { border: 1px solid var(--border); border-radius: 4px; text-transform: none; font-size: 1em; }
+    .scrub-marker.game-start { width: 2px; top: -8px; height: 20px; background: var(--win); transform: translateX(-1px); }
+    .scrub-pregame {
+      position: absolute; top: 0; left: 0; height: 4px; border-radius: 2px 0 0 2px;
+      background: repeating-linear-gradient(135deg, var(--bg) 0 3px, transparent 3px 6px);
+    }
+
+    .timeline h2 { margin: 0 0 8px; font-size: 1.1em; }
+    .tl-turn {
+      display: flex; align-items: center; gap: 8px; margin-top: 14px; padding: 4px 8px;
+      color: var(--muted); font-size: 0.8em; font-weight: 600; text-transform: uppercase;
+      border-bottom: 1px solid var(--border); cursor: pointer;
+    }
+    .tl-turn:first-child { margin-top: 0; }
+    .tl-item {
+      display: grid; grid-template-columns: 44px minmax(0, 1fr) auto; gap: 8px; align-items: start;
+      padding: 8px; border-radius: 6px; border-left: 3px solid transparent;
+    }
+    .tl-item[data-offset] { cursor: pointer; }
+    .tl-item:hover { background: color-mix(in srgb, var(--text) 6%, transparent); }
+    .tl-item.active { border-left-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+    .tl-time { color: var(--muted); font-variant-numeric: tabular-nums; font-size: 0.9em; }
+    .tl-body { overflow-wrap: anywhere; }
+    .tl-body .chip { margin-right: 6px; }
+    .tl-voice {
+      background: var(--bg); color: var(--text); border: 1px solid var(--border);
+      border-radius: 999px; padding: 2px 10px; font-size: 0.85em; font-weight: 400; margin-right: 6px;
+    }
+    .tl-voice.playing { border-color: var(--accent); color: var(--accent); }
+    #voice-button.recording { background: var(--loss); color: #fff; border-color: var(--loss); }
+    .tl-actions { display: flex; gap: 2px; opacity: 0; }
+    .tl-item:hover .tl-actions, .tl-turn:hover .tl-actions, .tl-actions:focus-within { opacity: 1; }
+    .tl-turn .tl-actions { margin-left: auto; }
+    .tl-actions button {
+      background: transparent; color: var(--muted); border: none; padding: 2px 6px; font-weight: 400;
+    }
+    .tl-actions button:hover { color: var(--text); filter: none; }
+    .tl-edit { grid-column: 1 / -1; display: flex; gap: 6px; flex-wrap: wrap; }
+    .tl-edit input { flex: 1; min-width: 120px; }
+  </style>
+
   <p><a href="/" class="muted">&larr; All matches</a></p>
   <h1>
     {{ match.deck }} vs {{ match.opponent_deck or '?' }}
     <span class="badge badge-{{ match.result }}">{{ match.result }}</span>
   </h1>
+  <p class="turn-order">
+    <span class="muted">I went</span>
+    <span class="segmented" id="turn-order">
+      <button type="button" class="secondary" data-order="first">First</button>
+      <button type="button" class="secondary" data-order="second">Second</button>
+    </span>
+  </p>
 
-  {% if video_filename %}
-    <video id="player" controls src="/media/{{ video_filename }}"></video>
+  <div class="review">
+    <div class="stage">
+      {% if video_filename %}
+        <video id="player" controls src="/media/{{ video_filename }}?v={{ video_version }}"></video>
 
-    <div class="scrubber">
-      <input type="range" id="scrub" min="0" max="0" step="0.01" value="0">
-      <div id="scrub-markers" class="scrub-markers"></div>
-    </div>
-    <p class="muted" style="font-size: 0.85em; margin-top: 4px;">
-      Drag to scrub. <span style="color: var(--accent);">&#9679;</span> notes,
-      <span style="color: var(--muted);">&#9679;</span> detected scene changes.
-    </p>
+        <div class="scrubber">
+          <input type="range" id="scrub" min="0" max="0" step="0.01" value="0" aria-label="Seek">
+          <div id="scrub-markers" class="scrub-markers"></div>
+        </div>
 
-    <style>
-      .scrubber { position: relative; margin-top: 10px; height: 28px; }
-      .scrubber input[type="range"] {
-        width: 100%; margin: 0; position: absolute; top: 8px; height: 12px;
-        -webkit-appearance: none; appearance: none; background: transparent; z-index: 2;
-      }
-      .scrubber input[type="range"]::-webkit-slider-runnable-track {
-        height: 4px; background: var(--border); border-radius: 2px;
-      }
-      .scrubber input[type="range"]::-webkit-slider-thumb {
-        -webkit-appearance: none; margin-top: -6px;
-        width: 16px; height: 16px; border-radius: 50%;
-        background: var(--accent); cursor: pointer; border: 2px solid var(--bg);
-      }
-      .scrub-markers {
-        position: absolute; top: 8px; left: 0; right: 0; height: 4px; pointer-events: none;
-      }
-      .scrub-marker {
-        position: absolute; top: -3px; width: 3px; height: 10px; border-radius: 1px;
-        background: var(--muted); cursor: pointer; pointer-events: auto; transform: translateX(-1.5px);
-      }
-      .scrub-marker.note { background: var(--accent); width: 4px; }
-    </style>
-  {% else %}
-    <p class="muted">No recording attached to this match.</p>
-  {% endif %}
-
-  {% if video_filename %}
-    <div class="panel" style="margin-top: 16px;">
-      <strong>Add a note at the current video time</strong>
-      <form class="inline" id="note-form" style="grid-template-columns: 1fr auto;">
-        <input id="note-text" placeholder="What's happening right now?" required>
-        <button type="submit">Add note</button>
-      </form>
-    </div>
-  {% endif %}
-
-  <h2>Timeline</h2>
-
-  {% if video_filename and not events %}
-    <form method="post" action="/matches/{{ match.id }}/analyze">
-      <button type="submit">Run scene-change analysis</button>
-    </form>
-  {% endif %}
-
-  <table id="events-table">
-    <thead>
-      <tr><th>Offset</th><th>Kind</th><th>Detail</th></tr>
-    </thead>
-    <tbody>
-      {% for e in events %}
-        <tr class="{{ 'clickable' if e.video_offset_seconds is not none else '' }}"
-            {% if e.video_offset_seconds is not none %}data-offset="{{ e.video_offset_seconds }}"{% endif %}>
-          <td>{{ '%.1fs' % e.video_offset_seconds if e.video_offset_seconds is not none else '—' }}</td>
-          <td>{{ e.kind }}</td>
-          <td>{{ e.detail or '' }}</td>
-        </tr>
+        <div class="panel composer">
+          <div class="composer-row">
+            {% for key, name in labels.items() %}
+              <button type="button" class="chip label-{{ key }}" data-label="{{ key }}"
+                      title="Add a {{ name }} note at the current time ({{ loop.index }})">{{ name }}</button>
+            {% endfor %}
+            <span style="flex: 1;"></span>
+            <button type="button" class="secondary" id="voice-button" title="Record a spoken note at the current time (V)">&#127897; Voice note</button>
+            <button type="button" class="secondary" id="start-button" title="The game itself starts at the current time (G)">Game starts here</button>
+            <button type="button" class="secondary" id="turn-button" title="Mark the start of a new turn (T)">New turn</button>
+          </div>
+          <form class="composer-row" id="note-form">
+            <input id="note-text" placeholder="Note at the current time (optional with a label)" autocomplete="off">
+            <button type="submit">Add note</button>
+          </form>
+          <p class="muted hints">
+            <kbd>N</kbd> pause and write a note &middot; <kbd>Enter</kbd> save and resume &middot; <kbd>Esc</kbd> cancel &middot;
+            <kbd>1</kbd>&ndash;<kbd>{{ labels|length }}</kbd> label this moment &middot; <kbd>V</kbd> voice note (again to save) &middot; <kbd>T</kbd> new turn &middot; <kbd>G</kbd> game starts here &middot;
+            <kbd>Space</kbd> play/pause &middot; <kbd>&larr;</kbd> <kbd>&rarr;</kbd> 5s &middot;
+            <kbd>&uarr;</kbd> <kbd>&darr;</kbd> previous/next note or turn &middot; <kbd>,</kbd> <kbd>.</kbd> one frame &middot;
+            <kbd>&lt;</kbd> <kbd>&gt;</kbd> speed <span id="speed">1&times;</span>
+          </p>
+        </div>
       {% else %}
-        <tr><td colspan="3" class="muted">No notes or events yet.</td></tr>
-      {% endfor %}
-    </tbody>
-  </table>
+        <p class="muted">No recording attached to this match.</p>
+      {% endif %}
+    </div>
+
+    <aside class="panel timeline" id="timeline-panel">
+      <h2>Timeline</h2>
+      <div id="timeline"></div>
+    </aside>
+  </div>
 
   <script>
-    const player = document.getElementById('player');
     const matchId = {{ match.id }};
+    const LABELS = {{ labels|tojson }};
+    // tojson sorts keys, so the display/shortcut order is passed separately.
+    const LABEL_ORDER = {{ labels.keys()|list|tojson }};
+    let events = {{ events|tojson }};
+    let turnOrder = {{ match.turn_order|tojson }};
+    let gameStart = {{ match.game_start_seconds|tojson }};
+
+    const player = document.getElementById('player');
     const scrub = document.getElementById('scrub');
     const scrubMarkers = document.getElementById('scrub-markers');
+    const timeline = document.getElementById('timeline');
+    const timelinePanel = document.getElementById('timeline-panel');
+    const noteForm = document.getElementById('note-form');
+    const noteText = document.getElementById('note-text');
 
-    function seekTo(offset) {
-      if (player && offset !== null && offset !== undefined) {
-        player.currentTime = parseFloat(offset);
-        player.play();
-      }
+    let editingId = null;
+    let activeId = null;
+    // Set when focusing the note field paused a playing video, so saving or
+    // cancelling picks playback back up.
+    let resumeAfterNote = false;
+
+    function formatTime(seconds) {
+      const s = Math.max(0, Math.floor(seconds));
+      return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
     }
 
-    document.getElementById('events-table').addEventListener('click', (ev) => {
-      const row = ev.target.closest('tr[data-offset]');
-      if (row) seekTo(row.dataset.offset);
-    });
-
-    function renderMarkers() {
-      if (!scrub || !scrubMarkers || !player.duration) return;
-      scrubMarkers.innerHTML = '';
-      document.querySelectorAll('#events-table tbody tr[data-offset]').forEach((row) => {
-        const offset = parseFloat(row.dataset.offset);
-        const kind = row.children[1].textContent.trim();
-        const detail = row.children[2].textContent.trim();
-        const pct = Math.min(100, Math.max(0, (offset / player.duration) * 100));
-        const marker = document.createElement('div');
-        marker.className = 'scrub-marker' + (kind === 'note' ? ' note' : '');
-        marker.style.left = pct + '%';
-        marker.title = `${offset.toFixed(1)}s — ${detail || kind}`;
-        marker.addEventListener('click', () => seekTo(offset));
-        scrubMarkers.appendChild(marker);
+    function sortedEvents() {
+      return [...events].sort((a, b) => {
+        if (a.offset_seconds === null || b.offset_seconds === null) {
+          return (a.offset_seconds !== null) - (b.offset_seconds !== null);
+        }
+        if (a.offset_seconds !== b.offset_seconds) return a.offset_seconds - b.offset_seconds;
+        return rank(a.kind) - rank(b.kind);
       });
     }
 
-    if (player && scrub) {
+    // Headers sort ahead of notes made at the very same moment.
+    function rank(kind) {
+      return kind === 'game_start' ? 0 : kind === 'turn' ? 1 : 2;
+    }
+
+    // The timeline as shown: the stored events plus the game-start line.
+    function timelineEntries() {
+      const entries = sortedEvents();
+      if (gameStart === null) return entries;
+      const start = { kind: 'game_start', offset_seconds: gameStart };
+      const at = entries.findIndex((e) => e.offset_seconds !== null
+        && (e.offset_seconds > gameStart || (e.offset_seconds === gameStart && rank(e.kind) > 0)));
+      entries.splice(at === -1 ? entries.length : at, 0, start);
+      return entries;
+    }
+
+    function gameStartHeader() {
+      const header = el('div', 'tl-turn game-start');
+      header.dataset.offset = gameStart;
+      header.append(el('span', '', 'Game start'), el('span', '', formatTime(gameStart)));
+      const actions = el('span', 'tl-actions');
+      if (player && gameStart >= 5) {
+        const trim = el('button', 'trim', 'Trim before');
+        trim.type = 'button';
+        trim.title = 'Cut everything before the game start off the recording';
+        trim.addEventListener('click', async (ev) => {
+          ev.stopPropagation();
+          if (!confirm(`Cut the first ${formatTime(gameStart)} off this recording?\n\n`
+              + 'Notes and turns move along with it. The untrimmed file is kept in '
+              + 'recordings/originals for {{ retention_days }} days.')) return;
+          trim.disabled = true;
+          trim.textContent = 'Trimming…';
+          if (await api('POST', `/matches/${matchId}/trim`)) location.reload();
+          else render();
+        });
+        actions.appendChild(trim);
+      }
+      const clear = el('button', '', '\u00D7');
+      clear.type = 'button';
+      clear.title = 'Remove the game start';
+      clear.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        setGameStart(null);
+      });
+      actions.appendChild(clear);
+      header.appendChild(actions);
+      header.addEventListener('click', () => seekTo(gameStart));
+      return header;
+    }
+
+    async function setGameStart(offset) {
+      if (!(await api('PUT', `/matches/${matchId}/game-start`, { offset_seconds: offset }))) return;
+      gameStart = offset;
+      render();
+    }
+
+    function el(tag, className, text) {
+      const node = document.createElement(tag);
+      if (className) node.className = className;
+      if (text !== undefined) node.textContent = text;
+      return node;
+    }
+
+    function seekTo(offset) {
+      if (!player || offset === null || offset === undefined) return;
+      player.currentTime = offset;
+      player.play();
+    }
+
+    async function api(method, url, body) {
+      const resp = await fetch(url, {
+        method,
+        headers: body ? { 'Content-Type': 'application/json' } : {},
+        body: body ? JSON.stringify(body) : undefined,
+      });
+      if (!resp.ok) {
+        alert('Could not save that.');
+        return null;
+      }
+      return resp.status === 204 ? true : resp.json();
+    }
+
+    function actionButtons(event) {
+      const actions = el('span', 'tl-actions');
+      if (event.kind !== 'turn') {
+        const edit = el('button', '', '✎');
+        edit.type = 'button';
+        edit.title = 'Edit';
+        edit.addEventListener('click', (ev) => {
+          ev.stopPropagation();
+          editingId = event.id;
+          render();
+        });
+        actions.appendChild(edit);
+      }
+      const remove = el('button', '', '×');
+      remove.type = 'button';
+      remove.title = 'Delete';
+      remove.addEventListener('click', async (ev) => {
+        ev.stopPropagation();
+        if ((event.detail || event.audio_url) && !confirm('Delete this note?')) return;
+        if (await api('DELETE', `/events/${event.id}`)) {
+          events = events.filter((e) => e.id !== event.id);
+          render();
+        }
+      });
+      actions.appendChild(remove);
+      return actions;
+    }
+
+    function editForm(event) {
+      const form = el('form', 'tl-edit');
+      const select = el('select');
+      select.appendChild(new Option('No label', ''));
+      for (const key of LABEL_ORDER) select.appendChild(new Option(LABELS[key], key));
+      select.value = event.label || '';
+      const input = el('input');
+      input.value = event.detail || '';
+      input.placeholder = 'Note';
+      const save = el('button', '', 'Save');
+      save.type = 'submit';
+      const cancel = el('button', 'secondary', 'Cancel');
+      cancel.type = 'button';
+      const close = () => { editingId = null; render(); };
+      cancel.addEventListener('click', close);
+      form.addEventListener('click', (ev) => ev.stopPropagation());
+      form.addEventListener('keydown', (ev) => { if (ev.key === 'Escape') close(); });
+      form.addEventListener('submit', async (ev) => {
+        ev.preventDefault();
+        const text = input.value.trim();
+        const label = select.value || null;
+        if (!text && !label && !event.audio_url) return;
+        const updated = await api('PATCH', `/events/${event.id}`, { text, label });
+        if (!updated) return;
+        events = events.map((e) => (e.id === updated.id ? updated : e));
+        close();
+      });
+      form.append(select, input, save, cancel);
+      setTimeout(() => input.focus());
+      return form;
+    }
+
+    function renderTimeline() {
+      timeline.replaceChildren();
+      const ordered = timelineEntries();
+      if (!ordered.length) {
+        timeline.appendChild(el('p', 'muted', 'No notes yet.'));
+        return;
+      }
+      let turn = 0;
+      for (const event of ordered) {
+        if (event.kind === 'game_start') {
+          timeline.appendChild(gameStartHeader());
+          continue;
+        }
+        if (event.kind === 'turn') {
+          turn += 1;
+          const header = el('div', 'tl-turn');
+          header.dataset.offset = event.offset_seconds;
+          header.append(el('span', '', `Turn ${turn}`));
+          if (turnOrder) header.append(el('span', 'who', turnOwner(turn)));
+          header.append(el('span', '', formatTime(event.offset_seconds)), actionButtons(event));
+          header.addEventListener('click', () => seekTo(event.offset_seconds));
+          timeline.appendChild(header);
+          continue;
+        }
+        const item = el('div', 'tl-item' + (event.id === activeId ? ' active' : ''));
+        item.dataset.id = event.id;
+        if (event.id === editingId) {
+          item.appendChild(editForm(event));
+          timeline.appendChild(item);
+          continue;
+        }
+        if (event.offset_seconds !== null) {
+          item.dataset.offset = event.offset_seconds;
+          item.addEventListener('click', () => seekTo(event.offset_seconds));
+        }
+        const time = el('span', 'tl-time', event.offset_seconds !== null ? formatTime(event.offset_seconds) : 'Match');
+        const body = el('span', 'tl-body');
+        if (event.label && LABELS[event.label]) {
+          body.appendChild(el('span', `chip label-${event.label}`, LABELS[event.label]));
+        }
+        if (event.kind === 'mark') {
+          body.appendChild(el('span', 'chip', 'Marked'));
+          body.appendChild(el('span', 'muted', 'Flagged while recording'));
+        }
+        if (event.audio_url) body.appendChild(voiceButton(event));
+        if (event.kind !== 'mark' && event.detail) {
+          body.appendChild(el('span', '', event.detail));
+        }
+        item.append(time, body, actionButtons(event));
+        timeline.appendChild(item);
+      }
+    }
+
+    function renderMarkers() {
+      if (!scrubMarkers || !player || !player.duration) return;
+      scrubMarkers.replaceChildren();
+      const percent = (offset) => Math.min(100, Math.max(0, (offset / player.duration) * 100)) + '%';
+      if (gameStart !== null) {
+        const pregame = el('div', 'scrub-pregame');
+        pregame.style.width = percent(gameStart);
+        scrubMarkers.appendChild(pregame);
+      }
+      let turn = 0;
+      for (const event of timelineEntries()) {
+        if (event.offset_seconds === null) continue;
+        if (event.kind === 'turn') turn += 1;
+        const marker = el('div', 'scrub-marker');
+        if (event.kind === 'turn' || event.kind === 'mark') marker.classList.add(event.kind);
+        if (event.kind === 'game_start') marker.classList.add('game-start');
+        if (event.label) marker.classList.add(`label-${event.label}`);
+        marker.style.left = percent(event.offset_seconds);
+        const what = event.kind === 'game_start' ? 'Game start' : event.kind === 'turn' ? `Turn ${turn}${turnOrder ? ' (' + turnOwner(turn) + ')' : ''}`
+          : [LABELS[event.label], event.detail].filter(Boolean).join(': ') || 'Flagged while recording';
+        marker.title = `${formatTime(event.offset_seconds)} — ${what}`;
+        marker.addEventListener('click', () => seekTo(event.offset_seconds));
+        scrubMarkers.appendChild(marker);
+      }
+    }
+
+    // One spoken note plays at a time; the video waits while it does.
+    const voicePlayer = new Audio();
+    let voicePlayingId = null;
+    voicePlayer.addEventListener('ended', () => { voicePlayingId = null; renderTimeline(); });
+
+    function voiceButton(event) {
+      const playing = voicePlayingId === event.id;
+      const button = el('button', 'tl-voice' + (playing ? ' playing' : ''), playing ? '\u25A0 Stop' : '\u25B6 Voice');
+      button.type = 'button';
+      button.title = 'Play this spoken note';
+      button.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        voicePlayer.pause();
+        if (playing) {
+          voicePlayingId = null;
+        } else {
+          if (player) player.pause();
+          voicePlayer.src = event.audio_url;
+          voicePlayer.play();
+          voicePlayingId = event.id;
+        }
+        renderTimeline();
+      });
+      return button;
+    }
+
+    // Turns alternate, so who went first settles whose turn each one is.
+    function turnOwner(turn) {
+      return (turn % 2 === 1) === (turnOrder === 'first') ? 'you' : 'opponent';
+    }
+
+    function renderTurnOrder() {
+      document.querySelectorAll('#turn-order button').forEach((button) => {
+        button.setAttribute('aria-pressed', String(button.dataset.order === turnOrder));
+      });
+    }
+
+    document.querySelectorAll('#turn-order button').forEach((button) => {
+      button.addEventListener('click', async () => {
+        button.blur();
+        // clicking the selected side again clears it
+        const next = button.dataset.order === turnOrder ? null : button.dataset.order;
+        if (!(await api('PUT', `/matches/${matchId}/turn-order`, { turn_order: next }))) return;
+        turnOrder = next;
+        renderTurnOrder();
+        render();
+      });
+    });
+
+    function render() {
+      renderTimeline();
+      renderMarkers();
+    }
+
+    // Highlight the note the video is currently at (the latest one already
+    // passed) and keep it in view inside the timeline panel.
+    function updateActive() {
+      if (!player) return;
+      let current = null;
+      for (const event of sortedEvents()) {
+        if (event.kind === 'turn' || event.offset_seconds === null) continue;
+        if (event.offset_seconds <= player.currentTime + 0.25) current = event.id;
+      }
+      if (current === activeId) return;
+      activeId = current;
+      timeline.querySelectorAll('.tl-item').forEach((item) => {
+        const isActive = Number(item.dataset.id) === activeId;
+        item.classList.toggle('active', isActive);
+        if (!isActive || timelinePanel.scrollHeight <= timelinePanel.clientHeight) return;
+        const top = item.offsetTop - timelinePanel.offsetTop;
+        if (top < timelinePanel.scrollTop || top + item.offsetHeight > timelinePanel.scrollTop + timelinePanel.clientHeight) {
+          timelinePanel.scrollTop = top - timelinePanel.clientHeight / 3;
+        }
+      });
+    }
+
+    function resumeIfPaused() {
+      if (resumeAfterNote) player.play();
+      resumeAfterNote = false;
+    }
+
+    async function saveNote(label) {
+      const text = noteText.value.trim();
+      if (!text && !label) return;
+      const note = await api('POST', `/matches/${matchId}/notes`, {
+        text, label: label || null, offset_seconds: player.currentTime,
+      });
+      if (!note) return;
+      events.push(note);
+      noteText.value = '';
+      noteText.blur();
+      render();
+      resumeIfPaused();
+    }
+
+    // A spoken note in progress: { recorder, stream, chunks, offset, timer, save }.
+    let voice = null;
+    const voiceButtonEl = document.getElementById('voice-button');
+    const VOICE_LABEL = voiceButtonEl ? voiceButtonEl.textContent : '';
+
+    let voiceStarting = false;
+
+    async function startVoice() {
+      if (voiceStarting) return;
+      voiceStarting = true;
+      // Opening the microphone can take a second (longer with a permission
+      // prompt), so freeze the moment being commented on first.
+      const offset = player.currentTime;
+      if (!player.paused) {
+        player.pause();
+        resumeAfterNote = true;
+      }
+      voicePlayer.pause();
+      voiceButtonEl.textContent = 'Starting\u2026';
+      let stream;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      } catch (err) {
+        alert('Could not use the microphone: ' + err.message);
+        voiceButtonEl.textContent = VOICE_LABEL;
+        resumeIfPaused();
+        return;
+      } finally {
+        voiceStarting = false;
+      }
+      const mediaRecorder = new MediaRecorder(stream);
+      const started = Date.now();
+      voice = { recorder: mediaRecorder, stream, chunks: [], offset, save: true };
+      mediaRecorder.addEventListener('dataavailable', (ev) => voice.chunks.push(ev.data));
+      mediaRecorder.addEventListener('stop', finishVoice);
+      const tick = () => {
+        voiceButtonEl.textContent = `\u25A0 Save ${formatTime((Date.now() - started) / 1000)}`;
+      };
+      voice.timer = setInterval(tick, 500);
+      tick();
+      voiceButtonEl.classList.add('recording');
+      mediaRecorder.start();
+    }
+
+    function stopVoice(save) {
+      if (!voice || voice.recorder.state === 'inactive') return;
+      voice.save = save;
+      voice.recorder.stop();
+    }
+
+    async function finishVoice() {
+      const { stream, chunks, offset, timer, save, recorder: mediaRecorder } = voice;
+      voice = null;
+      clearInterval(timer);
+      stream.getTracks().forEach((track) => track.stop());
+      voiceButtonEl.classList.remove('recording');
+      voiceButtonEl.textContent = VOICE_LABEL;
+      if (save) {
+        const type = mediaRecorder.mimeType || 'audio/webm';
+        const form = new FormData();
+        form.append('audio', new Blob(chunks, { type }), 'note');
+        form.append('offset_seconds', offset);
+        const resp = await fetch(`/matches/${matchId}/voice`, { method: 'POST', body: form });
+        if (resp.ok) {
+          events.push(await resp.json());
+          render();
+        } else {
+          alert('Could not save the voice note.');
+        }
+      }
+      resumeIfPaused();
+    }
+
+    const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 2, 3];
+
+    function changeSpeed(step) {
+      const current = SPEEDS.indexOf(player.playbackRate);
+      const next = Math.min(SPEEDS.length - 1, Math.max(0, (current === -1 ? 2 : current) + step));
+      player.playbackRate = SPEEDS[next];
+      document.getElementById('speed').textContent = SPEEDS[next] + '\u00D7';
+    }
+
+    function stepFrame(direction) {
+      player.pause();
+      player.currentTime = Math.max(0, player.currentTime + direction / 30);
+    }
+
+    // Jump to the timeline entry before or after the current position.
+    function jumpEntry(direction) {
+      const offsets = timelineEntries().map((e) => e.offset_seconds).filter((o) => o !== null);
+      const now = player.currentTime;
+      // Going back within a second of an entry means "the one before it",
+      // otherwise a playing video would keep landing on the same entry.
+      const target = direction > 0
+        ? offsets.find((o) => o > now + 0.25)
+        : [...offsets].reverse().find((o) => o < now - 1);
+      if (target !== undefined) player.currentTime = target;
+    }
+
+    async function addTurn() {
+      const turn = await api('POST', `/matches/${matchId}/turns`, { offset_seconds: player.currentTime });
+      if (!turn) return;
+      events.push(turn);
+      render();
+    }
+
+    if (player) {
+      let scrubbing = false;
       player.addEventListener('loadedmetadata', () => {
         scrub.max = player.duration;
+        // A link from the moments page points at one moment; otherwise
+        // skip the menus and matchmaking in front of the game.
+        const linked = parseFloat(new URLSearchParams(location.search).get('t'));
+        if (!Number.isNaN(linked)) player.currentTime = linked;
+        else if (gameStart !== null && player.currentTime < gameStart) player.currentTime = gameStart;
         renderMarkers();
       });
       player.addEventListener('timeupdate', () => {
-        if (document.activeElement !== scrub) scrub.value = player.currentTime;
+        if (!scrubbing) scrub.value = player.currentTime;
+        updateActive();
       });
+      player.addEventListener('play', () => { resumeAfterNote = false; });
       scrub.addEventListener('input', () => {
+        scrubbing = true;
         player.currentTime = parseFloat(scrub.value);
       });
-    }
+      scrub.addEventListener('change', () => {
+        scrubbing = false;
+        scrub.blur();  // so the keyboard shortcuts work again straight away
+      });
 
-    const noteForm = document.getElementById('note-form');
-    if (noteForm) {
-      noteForm.addEventListener('submit', async (ev) => {
+      noteText.addEventListener('focus', () => {
+        if (!player.paused) {
+          player.pause();
+          resumeAfterNote = true;
+        }
+      });
+      noteText.addEventListener('keydown', (ev) => {
+        if (ev.key !== 'Escape') return;
+        noteText.blur();
+        resumeIfPaused();
+      });
+      noteForm.addEventListener('submit', (ev) => {
         ev.preventDefault();
-        const textInput = document.getElementById('note-text');
-        const text = textInput.value.trim();
-        if (!text) return;
-        const offset = player ? player.currentTime : null;
-
-        const resp = await fetch(`/matches/${matchId}/notes`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ text, offset_seconds: offset }),
+        saveNote(null);
+      });
+      document.querySelectorAll('button[data-label]').forEach((button) => {
+        button.addEventListener('click', () => {
+          button.blur();
+          saveNote(button.dataset.label);
         });
-        if (!resp.ok) {
-          alert('Failed to save note.');
+      });
+      voiceButtonEl.addEventListener('click', () => {
+        voiceButtonEl.blur();
+        voice ? stopVoice(true) : startVoice();
+      });
+      const startButton = document.getElementById('start-button');
+      startButton.addEventListener('click', () => {
+        startButton.blur();
+        setGameStart(player.currentTime);
+      });
+      const turnButton = document.getElementById('turn-button');
+      turnButton.addEventListener('click', () => {
+        turnButton.blur();
+        addTurn();
+      });
+
+      document.addEventListener('keydown', (ev) => {
+        if (ev.metaKey || ev.ctrlKey || ev.altKey) return;
+        if (voice) {
+          // While speaking, the keyboard only ends the note.
+          if (ev.key === 'Escape') stopVoice(false);
+          else if (['v', 'V', 'Enter', ' '].includes(ev.key)) stopVoice(true);
+          else return;
+          ev.preventDefault();
           return;
         }
-        const note = await resp.json();
-
-        const tbody = document.querySelector('#events-table tbody');
-        const emptyRow = tbody.querySelector('td[colspan]');
-        if (emptyRow) emptyRow.closest('tr').remove();
-
-        const tr = document.createElement('tr');
-        tr.className = 'clickable';
-        tr.dataset.offset = note.offset_seconds;
-        tr.innerHTML = `<td>${note.offset_seconds != null ? note.offset_seconds.toFixed(1) + 's' : '—'}</td>` +
-                        `<td>note</td><td></td>`;
-        tr.children[2].textContent = note.detail;
-        tbody.appendChild(tr);
-        renderMarkers();
-
-        textInput.value = '';
+        if (ev.target.closest('input, textarea, select, button')) return;
+        const key = ev.key.toLowerCase();
+        if (key === '<' || key === '>') {
+          changeSpeed(key === '>' ? 1 : -1);
+        } else if (key === ',' || key === '.') {
+          stepFrame(key === '.' ? 1 : -1);
+        } else if (key === 'arrowup' || key === 'arrowdown') {
+          jumpEntry(key === 'arrowdown' ? 1 : -1);
+        } else if (key === ' ') {
+          player.paused ? player.play() : player.pause();
+        } else if (key === 'arrowleft') {
+          player.currentTime = Math.max(0, player.currentTime - 5);
+        } else if (key === 'arrowright') {
+          player.currentTime = Math.min(player.duration || Infinity, player.currentTime + 5);
+        } else if (key === 'n') {
+          noteText.focus();
+        } else if (key === 'v') {
+          startVoice();
+        } else if (key === 't') {
+          addTurn();
+        } else if (key === 'g') {
+          setGameStart(player.currentTime);
+        } else if (/^[1-9]$/.test(key) && LABEL_ORDER[Number(key) - 1]) {
+          saveNote(LABEL_ORDER[Number(key) - 1]);
+        } else {
+          return;
+        }
+        ev.preventDefault();
       });
     }
+
+    renderTurnOrder();
+    render();
   </script>
 {% endblock %}
