@@ -22,7 +22,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 
-from . import cards, decks, insights, recorder, storage, transcribe, turns
+from . import battlelog, cards, decks, insights, recorder, storage, transcribe, turns
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
 RECORDINGS_DIR = Path("recordings")
@@ -164,7 +164,14 @@ def matches_matching(
         if deck and m.deck != deck:
             continue
         haystack = "\n".join(
-            [m.deck, m.opponent_deck or "", m.notes or "", m.lesson or "", note_text.get(m.id, "")]
+            [
+                m.deck,
+                m.opponent_deck or "",
+                m.notes or "",
+                m.lesson or "",
+                m.battle_log or "",
+                note_text.get(m.id, ""),
+            ]
         ).lower()
         if needle and needle not in haystack:
             continue
@@ -391,6 +398,7 @@ def create_match(
     result: storage.Result = Form(...),
     notes: str = Form(""),
     video_file: str = Form(""),
+    battle_log: str = Form(""),
 ):
     video_path = None
     if video_file:
@@ -398,6 +406,15 @@ def create_match(
         video_path = RECORDINGS_DIR / Path(video_file).name
         if not video_path.is_file():
             raise HTTPException(status_code=400, detail="Unknown recording")
+    # A pasted battle log knows who won and who went first, so it overrules
+    # the result picked in the form.
+    log = battlelog.parse(battle_log) if battle_log.strip() else None
+    if log is not None and not log.turns:
+        raise HTTPException(
+            status_code=400, detail="This doesn't look like a battle log: no turns found in it"
+        )
+    if log is not None and log.result:
+        result = log.result
     match_id = storage.log_match(
         deck=deck,
         result=result,
@@ -406,6 +423,10 @@ def create_match(
         video_file=str(video_path) if video_path else None,
         db_path=db_path(),
     )
+    if log is not None:
+        storage.set_battle_log(match_id, battle_log.strip(), db_path=db_path())
+        if log.turn_order:
+            storage.set_turn_order(match_id, log.turn_order, db_path=db_path())
     if video_path:
         storage.add_events(
             match_id,
@@ -413,7 +434,9 @@ def create_match(
             db_path=db_path(),
         )
     # With a recording attached the next thing to do is watch it back.
-    return RedirectResponse(f"/matches/{match_id}" if video_path else "/", status_code=303)
+    return RedirectResponse(
+        f"/matches/{match_id}" if video_path or log is not None else "/", status_code=303
+    )
 
 
 @app.get("/matches/{match_id}")
@@ -443,8 +466,31 @@ def match_detail(request: Request, match_id: int):
             "video_size": video_size,
             "retention_days": ORIGINALS_RETENTION_DAYS,
             "can_transcribe": transcribe.available(),
+            "battle_log": _battle_log_json(match.battle_log),
         },
     )
+
+
+def _battle_log_json(text: str | None) -> dict | None:
+    """A stored battle log, parsed and worded for the timeline."""
+    if not text:
+        return None
+    log = battlelog.parse(text)
+
+    def actions(items: list[battlelog.Action]) -> list[dict]:
+        return [{"text": a.text, "details": a.details} for a in items]
+
+    return {
+        "setup": actions(log.narrated(battlelog.LogTurn(player="", actions=log.setup))),
+        "turns": [
+            {
+                "owner": ("you" if turn.player == log.me else "opponent") if log.me else None,
+                "actions": actions(log.narrated(turn)),
+            }
+            for turn in log.turns
+        ],
+        "opponent_pokemon": log.pokemon_of(log.opponent),
+    }
 
 
 def _event_json(event: storage.Event) -> dict:
@@ -482,6 +528,38 @@ def set_turn_order(match_id: int, body: TurnOrderIn):
     _require_match(match_id)
     storage.set_turn_order(match_id, body.turn_order, db_path=db_path())
     return {"turn_order": body.turn_order}
+
+
+class BattleLogIn(BaseModel):
+    text: str = ""
+
+
+@app.put("/matches/{match_id}/battle-log")
+def set_battle_log(match_id: int, body: BattleLogIn):
+    """Attach the battle log copied from the game (or remove it, with empty
+    text). The log settles who went first and who won, so those are taken
+    from it."""
+    match = _require_match(match_id)
+    text = body.text.strip()
+    if not text:
+        storage.set_battle_log(match_id, None, db_path=db_path())
+        return {"battle_log": None, "turn_order": match.turn_order, "result": match.result}
+    log = battlelog.parse(text)
+    if not log.turns:
+        raise HTTPException(
+            status_code=400, detail="This doesn't look like a battle log: no turns found in it"
+        )
+    storage.set_battle_log(match_id, text, db_path=db_path())
+    if log.turn_order:
+        storage.set_turn_order(match_id, log.turn_order, db_path=db_path())
+    if log.result:
+        storage.set_result(match_id, log.result, db_path=db_path())
+    return {
+        "battle_log": _battle_log_json(text),
+        "turn_order": log.turn_order or match.turn_order,
+        "result": log.result or match.result,
+        "result_changed": bool(log.result and log.result != match.result),
+    }
 
 
 class LessonIn(BaseModel):

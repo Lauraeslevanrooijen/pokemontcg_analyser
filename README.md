@@ -38,6 +38,11 @@ Early scaffold. Working today:
 - Spoken notes are written out as text on this machine, using the card and
   deck names you have saved as vocabulary. This needs the optional speech
   model: `pip install -e ".[transcribe]"` (a few hundred MB on first use).
+- Battle log: paste the log the game lets you copy after a match, when
+  logging the match or on its review page. The timeline then shows what
+  happened in each turn, and the result and who went first come from the
+  log. The log has no timestamps; it lines up with the video through the
+  turn markers.
 - Decks page: save a decklist per deck with versions; matches count towards
   the version that was current when they were logged, so a change to the
   list shows up as a change in results.
@@ -111,6 +116,7 @@ src/pokemontcg_analyser/
   webapp.py     local review app (FastAPI + Jinja2 templates)
   insights.py   cross-match stats and labelled moments
   decks.py      decklist parsing and version diffs
+  battlelog.py  parser for the game's exported battle log
   turns.py      turn detection from the ring around the board
   transcribe.py spoken notes to text (faster-whisper, optional)
   desktop.py    desktop-app window + macOS .app launcher

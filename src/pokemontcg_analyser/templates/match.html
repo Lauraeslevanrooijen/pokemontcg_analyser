@@ -92,6 +92,12 @@
       background: transparent; color: var(--muted); border: none; padding: 2px 6px; font-weight: 400;
     }
     .tl-actions button:hover { color: var(--text); filter: none; }
+    .tl-log { margin: 2px 0 6px 8px; font-size: 0.85em; }
+    .tl-log summary { color: var(--muted); font-size: 0.9em; padding: 2px 0; }
+    .tl-log ol { margin: 4px 0 0; padding-left: 20px; }
+    .tl-log li { padding: 1px 0; }
+    .tl-log li.strong { color: var(--text); font-weight: 600; }
+    .tl-log .detail { display: block; color: var(--muted); font-size: 0.92em; }
     .tl-edit { grid-column: 1 / -1; display: flex; gap: 6px; flex-wrap: wrap; }
     .tl-edit input { flex: 1; min-width: 120px; }
   </style>
@@ -99,7 +105,7 @@
   <p><a href="/" class="muted">&larr; All matches</a></p>
   <h1>
     {{ match.deck }} vs {{ match.opponent_deck or '?' }}
-    <span class="badge badge-{{ match.result }}">{{ match.result }}</span>
+    <span class="badge badge-{{ match.result }}" id="result-badge">{{ match.result }}</span>
   </h1>
   <p class="turn-order">
     <span class="muted">I went</span>
@@ -111,6 +117,7 @@
            placeholder="What do I take from this game?" style="flex: 1; min-width: 200px; max-width: 640px;">
     <span id="lesson-saved" class="muted" style="font-size: 0.85em;"></span>
   </p>
+  <p class="muted" id="opponent-pokemon" style="margin: -8px 0 16px; font-size: 0.9em;" hidden></p>
 
   <div class="review">
     <div class="stage">
@@ -158,6 +165,19 @@
     </div>
 
     <aside class="panel timeline" id="timeline-panel">
+      <details id="battle-log-panel" style="float: right; max-width: 100%;">
+        <summary class="muted" style="font-size: 0.85em; text-align: right;">Battle log</summary>
+        <form id="battle-log-form" style="display: grid; gap: 6px; margin: 6px 0 12px; clear: both;">
+          <p class="muted" style="font-size: 0.8em; margin: 0;">
+            After a match, before leaving the summary screen: open Battle Log in the game, copy everything
+            (Cmd+A, Cmd+C) and paste it here. It adds what happened in each turn and settles who went first
+            and who won.
+          </p>
+          <textarea id="battle-log-text" rows="8" style="font-size: 0.8em; font-family: ui-monospace, monospace;"
+                    placeholder="Paste the battle log">{{ match.battle_log or '' }}</textarea>
+          <div><button type="submit">Save battle log</button></div>
+        </form>
+      </details>
       <h2>Timeline</h2>
       <div id="timeline"></div>
     </aside>
@@ -172,6 +192,7 @@
     let turnOrder = {{ match.turn_order|tojson }};
     let gameStart = {{ match.game_start_seconds|tojson }};
     const CAN_TRANSCRIBE = {{ can_transcribe|tojson }};
+    let battleLog = {{ battle_log|tojson }};
 
     const player = document.getElementById('player');
     const scrub = document.getElementById('scrub');
@@ -359,10 +380,17 @@
     function renderTimeline() {
       timeline.replaceChildren();
       const ordered = timelineEntries();
-      if (!ordered.length) {
+      if (!ordered.length && !battleLog) {
         timeline.appendChild(el('p', 'muted', 'No notes yet.'));
         return;
       }
+      const logTurns = battleLog ? battleLog.turns : [];
+      const markers = ordered.filter((e) => e.kind === 'turn').length;
+      if (battleLog && markers && markers !== logTurns.length) {
+        timeline.appendChild(el('p', 'muted',
+          `The battle log has ${logTurns.length} turns and the timeline ${markers}, so they may not line up.`));
+      }
+      if (battleLog && battleLog.setup.length) timeline.appendChild(logBlock('Setup', battleLog.setup, false));
       let turn = 0;
       for (const event of ordered) {
         if (event.kind === 'game_start') {
@@ -378,6 +406,7 @@
           header.append(el('span', '', formatTime(event.offset_seconds)), actionButtons(event));
           header.addEventListener('click', () => seekTo(event.offset_seconds));
           timeline.appendChild(header);
+          if (logTurns[turn - 1]) timeline.appendChild(logBlock('Battle log', logTurns[turn - 1].actions, true));
           continue;
         }
         const item = el('div', 'tl-item' + (event.id === activeId ? ' active' : ''));
@@ -408,7 +437,34 @@
         item.append(time, body, actionButtons(event));
         timeline.appendChild(item);
       }
+      // Turns the log knows about but the video has no marker for yet.
+      for (let index = turn; index < logTurns.length; index += 1) {
+        const header = el('div', 'tl-turn');
+        header.style.cursor = 'default';
+        header.append(el('span', '', `Turn ${index + 1}`));
+        if (logTurns[index].owner) header.append(el('span', 'who', logTurns[index].owner));
+        header.append(el('span', '', 'no marker'));
+        timeline.appendChild(header);
+        timeline.appendChild(logBlock('Battle log', logTurns[index].actions, true));
+      }
     }
+
+    // What the battle log says happened, as a foldable list. Attacks,
+    // knock outs and prizes stand out; the rest is bookkeeping.
+    function logBlock(title, actions, open) {
+      const block = el('details', 'tl-log');
+      block.open = open;
+      block.appendChild(el('summary', '', `${title} · ${actions.length} ${actions.length === 1 ? 'action' : 'actions'}`));
+      const list = el('ol');
+      for (const action of actions) {
+        const item = el('li', /\bused\b|Knocked Out|Prize card|\bwins?\b|conceded/.test(action.text) ? 'strong' : '', action.text);
+        for (const detail of action.details) item.appendChild(el('span', 'detail', detail));
+        list.appendChild(item);
+      }
+      block.appendChild(list);
+      return block;
+    }
+
 
     function renderMarkers() {
       if (!scrubMarkers || !player || !player.duration) return;
@@ -470,6 +526,30 @@
       return (turn % 2 === 1) === (turnOrder === 'first') ? 'you' : 'opponent';
     }
 
+    document.getElementById('battle-log-form').addEventListener('submit', async (ev) => {
+      ev.preventDefault();
+      const resp = await fetch(`/matches/${matchId}/battle-log`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: document.getElementById('battle-log-text').value }),
+      });
+      const saved = await resp.json().catch(() => ({}));
+      if (!resp.ok) {
+        alert(saved.detail || 'Could not save the battle log.');
+        return;
+      }
+      battleLog = saved.battle_log;
+      turnOrder = saved.turn_order;
+      const badge = document.getElementById('result-badge');
+      badge.textContent = saved.result;
+      badge.className = `badge badge-${saved.result}`;
+      document.getElementById('battle-log-panel').open = false;
+      renderOpponentPokemon();
+      renderTurnOrder();
+      render();
+      if (saved.result_changed) alert(`The battle log says this was a ${saved.result}; the result has been corrected.`);
+    });
+
     const lessonInput = document.getElementById('lesson');
     let savedLesson = lessonInput.value;
     async function saveLesson() {
@@ -485,6 +565,15 @@
     lessonInput.addEventListener('keydown', (ev) => {
       if (ev.key === 'Enter' || ev.key === 'Escape') lessonInput.blur();
     });
+
+    // From the battle log: what the opponent put into play, as a reminder
+    // of what deck this was.
+    function renderOpponentPokemon() {
+      const line = document.getElementById('opponent-pokemon');
+      const shown = battleLog ? battleLog.opponent_pokemon : [];
+      line.hidden = !shown.length;
+      line.textContent = shown.length ? `Opponent played: ${shown.join(', ')}` : '';
+    }
 
     function renderTurnOrder() {
       document.querySelectorAll('#turn-order button').forEach((button) => {
@@ -805,6 +894,7 @@
       });
     }
 
+    renderOpponentPokemon();
     renderTurnOrder();
     render();
     events.filter((e) => e.transcribing).forEach(followTranscription);

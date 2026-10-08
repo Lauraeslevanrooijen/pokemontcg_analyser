@@ -586,3 +586,48 @@ def test_other_start_failures_show_the_reason(
     client.post("/recording/start", follow_redirects=False)
 
     assert "no such device" in client.get("/").text
+
+
+def test_battle_log_is_stored_and_corrects_order_and_result(client: TestClient) -> None:
+    text = (Path(__file__).parent / "data" / "battle_log.txt").read_text()
+    match_id = storage.log_match(deck="Pult", result="loss")  # logged wrongly
+
+    resp = client.put(f"/matches/{match_id}/battle-log", json={"text": text})
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert (body["turn_order"], body["result"], body["result_changed"]) == ("second", "win", True)
+    assert [t["owner"] for t in body["battle_log"]["turns"]] == ["opponent", "you", "opponent", "you"]
+    assert body["battle_log"]["opponent_pokemon"] == ["Poltchageist", "Dhelmise"]
+    match = storage.get_match(match_id)
+    assert (match.turn_order, match.result) == ("second", "win")
+    assert "Played Buddy-Buddy Poffin." in client.get(f"/matches/{match_id}").text
+    # what happened in a game is searchable from the match list
+    page = client.get("/?q=poltchageist").text
+    assert "Pult" in page[page.index("<tbody>") :]
+
+    assert client.put(f"/matches/{match_id}/battle-log", json={"text": "not a log"}).status_code == 400
+    assert storage.get_match(match_id).battle_log == text.strip()
+
+    client.put(f"/matches/{match_id}/battle-log", json={"text": ""})
+    assert storage.get_match(match_id).battle_log is None
+    assert storage.get_match(match_id).result == "win"  # removing the log undoes nothing
+
+
+def test_logging_a_match_with_a_battle_log_takes_the_result_from_it(client: TestClient) -> None:
+    text = (Path(__file__).parent / "data" / "battle_log.txt").read_text()
+
+    resp = client.post(
+        "/matches",
+        data={"deck": "Pult", "result": "loss", "battle_log": text},
+        follow_redirects=False,
+    )
+
+    match = storage.list_matches()[0]
+    assert resp.headers["location"] == f"/matches/{match.id}"
+    assert (match.result, match.turn_order) == ("win", "second")
+    assert match.battle_log.startswith("Setup")
+
+    resp = client.post("/matches", data={"deck": "Pult", "result": "win", "battle_log": "nonsense"})
+    assert resp.status_code == 400
+    assert len(storage.list_matches()) == 1

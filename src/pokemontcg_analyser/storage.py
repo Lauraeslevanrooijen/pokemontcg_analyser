@@ -35,7 +35,8 @@ CREATE TABLE IF NOT EXISTS matches (
     turn_order TEXT CHECK (turn_order IN ('first', 'second')),
     game_start_seconds REAL,
     lesson TEXT,
-    deck_version_id INTEGER REFERENCES deck_versions(id)
+    deck_version_id INTEGER REFERENCES deck_versions(id),
+    battle_log TEXT
 );
 
 CREATE TABLE IF NOT EXISTS deck_versions (
@@ -82,6 +83,8 @@ def connect(db_path: Path | None = None) -> Iterator[sqlite3.Connection]:
             conn.execute("ALTER TABLE matches ADD COLUMN lesson TEXT")
         if "deck_version_id" not in columns:
             conn.execute("ALTER TABLE matches ADD COLUMN deck_version_id INTEGER")
+        if "battle_log" not in columns:
+            conn.execute("ALTER TABLE matches ADD COLUMN battle_log TEXT")
         yield conn
         conn.commit()
     finally:
@@ -103,6 +106,7 @@ class Match:
     lesson: str | None = None  # the one thing to take away from this game
     # The saved list of this deck that was current when the match was logged.
     deck_version_id: int | None = None
+    battle_log: str | None = None  # as copied from the game after the match
 
 
 def log_match(
@@ -183,6 +187,16 @@ def set_turn_order(
         conn.execute(
             "UPDATE matches SET turn_order = ? WHERE id = ?", (turn_order, match_id)
         )
+
+
+def set_battle_log(match_id: int, text: str | None, db_path: Path | None = None) -> None:
+    with connect(db_path) as conn:
+        conn.execute("UPDATE matches SET battle_log = ? WHERE id = ?", (text or None, match_id))
+
+
+def set_result(match_id: int, result: Result, db_path: Path | None = None) -> None:
+    with connect(db_path) as conn:
+        conn.execute("UPDATE matches SET result = ? WHERE id = ?", (result, match_id))
 
 
 def set_lesson(match_id: int, lesson: str | None, db_path: Path | None = None) -> None:

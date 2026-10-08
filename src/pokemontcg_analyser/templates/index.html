@@ -137,6 +137,15 @@
           </select>
         {% endif %}
         <button type="submit">Log match</button>
+        <details style="grid-column: 1 / -1;">
+          <summary class="muted" style="cursor: pointer; font-size: 0.85em;">Paste the battle log (optional)</summary>
+          <p class="muted" style="font-size: 0.8em; margin: 6px 0;">
+            Copy it in the game before leaving the summary screen (Battle Log, then Cmd+A and Cmd+C). The result
+            and who went first are then taken from the log.
+          </p>
+          <textarea name="battle_log" rows="6" style="width: 100%; font-size: 0.8em; font-family: ui-monospace, monospace;"
+                    placeholder="Paste the battle log"></textarea>
+        </details>
       </form>
       <datalist id="known-decks">
         {% for d in known_decks %}<option value="{{ d }}">{% endfor %}

@@ -1,0 +1,52 @@
+Setup
+Misty chose heads for the opening coin flip.
+Misty won the coin toss.
+Misty decided to go second.
+Misty drew 7 cards for the opening hand.
+- 7 drawn cards.
+   • Buddy-Buddy Poffin, Budew, Poké Pad, Dudunsparce, Munkidori, Basic Fire Energy, Drakloak
+Brock drew 7 cards for the opening hand.
+- 7 drawn cards.
+Misty played Budew to the Active Spot.
+Brock played Poltchageist to the Active Spot.
+
+Brock's Turn
+Brock drew a card.
+Brock played Ultra Ball.
+- Brock discarded 2 cards.
+   • Banette, Poltchageist
+- Brock drew Dhelmise.
+- Brock shuffled their deck.
+Brock played Dhelmise to the Bench.
+Brock ended their turn.
+
+Misty's Turn
+Misty drew Night Stretcher.
+Misty played Buddy-Buddy Poffin.
+- Misty drew 2 cards and played them to the Bench.
+   • Dreepy, Dreepy
+- Misty shuffled their deck.
+Misty played Poké Pad.
+- Misty drew Dunsparce.
+- Misty shuffled their deck.
+Misty played Dunsparce to the Bench.
+Misty played Munkidori to the Bench.
+Misty attached Basic Fire Energy to Dreepy on the Bench.
+Misty's Budew used Itchy Pollen on Brock’s Poltchageist for 10 damage.
+
+Brock's Turn
+Brock drew a card.
+Brock didn't take an action in time.
+
+Misty's Turn
+Misty drew Lillie's Determination.
+Misty evolved Dreepy to Drakloak on the Bench.
+Misty evolved Dunsparce to Dudunsparce on the Bench.
+Misty played Lillie's Determination.
+- Misty shuffled Night Stretcher into their deck.
+- Misty drew 8 cards.
+   • Basic Darkness Energy, Crushing Hammer, Basic Fire Energy, Poké Pad, Ultra Ball, Meowth ex, Night Stretcher, Lillie's Determination
+Misty played Poké Pad.
+- Misty drew Drakloak.
+- Misty shuffled their deck.
+Opponent conceded. Misty wins.
