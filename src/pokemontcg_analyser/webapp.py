@@ -263,9 +263,12 @@ def start_recording(
         if chosen is None:
             raise HTTPException(status_code=400, detail="That microphone is not connected")
         audio_index = chosen.index
+    # The window position is relative to the main display, so only crop
+    # to the game when that is the screen being recorded.
+    crop = recorder.game_crop() if device.name == "Capture screen 0" else None
     try:
         _recording = recorder.start_recording(
-            device.index, RECORDINGS_DIR, audio_index=audio_index
+            device.index, RECORDINGS_DIR, audio_index=audio_index, crop=crop
         )
     except (RuntimeError, OSError) as exc:
         raise HTTPException(status_code=500, detail=str(exc))

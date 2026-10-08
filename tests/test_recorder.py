@@ -120,3 +120,34 @@ def test_build_ffmpeg_command_with_microphone(tmp_path) -> None:
     assert "-c:a" not in silent
     assert voiced[voiced.index("-i") + 1] == "3:1"
     assert voiced[voiced.index("-c:a") + 1] == "aac"
+
+
+def test_fit_game_area_letterboxes_a_fullscreen_window() -> None:
+    # fullscreen below the notch on a 1710x1107 display
+    x, y, w, h = recorder.fit_game_area((1710, 1107), (0, 34, 1710, 1073))
+
+    assert (x, w) == (0, 1)
+    assert round(y * 2214) == 179  # measured in a real capture: 174
+    assert round(h * 2214) == 1924
+
+
+def test_fit_game_area_pillarboxes_a_wide_window() -> None:
+    x, y, w, h = recorder.fit_game_area((2000, 1000), (0, 100, 2000, 450))
+
+    assert round(w * 2000) == 800 and round(h * 1000) == 450
+    assert round(x * 2000) == 600 and round(y * 1000) == 100
+
+
+def test_fit_game_area_gives_up_when_off_screen_or_pointless() -> None:
+    assert recorder.fit_game_area((1710, 1107), (1710, 0, 1920, 1080)) is None  # other display
+    assert recorder.fit_game_area((1920, 1080), (0, 0, 1920, 1080)) is None  # nothing to cut
+
+
+def test_build_ffmpeg_command_crops_before_scaling(tmp_path) -> None:
+    cmd = recorder.build_ffmpeg_command(
+        "ffmpeg", 3, tmp_path / "x.mp4", crop=(0.0, 0.0808, 1.0, 0.869)
+    )
+
+    assert cmd[cmd.index("-vf") + 1].startswith(
+        "crop=iw*1.00000:ih*0.86900:iw*0.00000:ih*0.08080,format=nv12,hwupload"
+    )

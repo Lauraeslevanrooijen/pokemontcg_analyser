@@ -15,6 +15,7 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
     monkeypatch.setattr(storage, "DEFAULT_DB_PATH", tmp_path / "matches.db")
     monkeypatch.setattr(webapp, "RECORDINGS_DIR", tmp_path / "recordings")
     monkeypatch.setattr(webapp, "_recording", None)
+    monkeypatch.setattr(recorder, "game_crop", lambda: None)
     monkeypatch.setattr(
         recorder,
         "screens_and_microphones",
@@ -113,7 +114,7 @@ class _FakeRecording:
 def test_start_and_stop_recording(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
     started_with = []
 
-    def fake_start(device_index: int, out_dir: Path, audio_index=None) -> _FakeRecording:
+    def fake_start(device_index: int, out_dir: Path, audio_index=None, crop=None) -> _FakeRecording:
         started_with.append(device_index)
         return _FakeRecording(out_dir / "2026-01-01_120000.mp4")
 
@@ -173,7 +174,7 @@ def test_marks_made_while_recording_land_on_the_match(
     monkeypatch.setattr(
         recorder,
         "start_recording",
-        lambda device_index, out_dir, audio_index=None: _FakeRecording(out_dir / "marked.mp4"),
+        lambda device_index, out_dir, audio_index=None, crop=None: _FakeRecording(out_dir / "marked.mp4"),
     )
     assert client.post("/recording/mark").status_code == 409
 
@@ -407,7 +408,7 @@ def test_recording_with_voice_passes_the_microphone(
 ) -> None:
     audio = []
 
-    def fake_start(device_index: int, out_dir: Path, audio_index=None) -> _FakeRecording:
+    def fake_start(device_index: int, out_dir: Path, audio_index=None, crop=None) -> _FakeRecording:
         audio.append(audio_index)
         return _FakeRecording(out_dir / f"take{len(audio)}.mp4")
 

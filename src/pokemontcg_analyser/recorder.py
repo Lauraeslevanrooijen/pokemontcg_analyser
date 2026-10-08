@@ -124,6 +124,64 @@ def _write_sidecar(
     )
 
 
+GAME_APP_NAME = "Pokemon TCG Live"
+
+# Asks the window server (no extra permission needed) for the main display's
+# size and every normal window of one app, as JSON.
+_WINDOW_SCRIPT = """
+ObjC.import('CoreGraphics');
+function run(argv) {
+  const display = $.CGDisplayBounds($.CGMainDisplayID());
+  const windows = ObjC.deepUnwrap(ObjC.castRefToObject($.CGWindowListCopyWindowInfo(0, 0)))
+    .filter((w) => w.kCGWindowLayer === 0 && w.kCGWindowOwnerName === argv[0])
+    .map((w) => w.kCGWindowBounds);
+  return JSON.stringify({ display: [display.size.width, display.size.height], windows });
+}
+"""
+
+Crop = tuple[float, float, float, float]  # x, y, width, height as fractions of the screen
+
+
+def fit_game_area(display: tuple[float, float], window: tuple[float, float, float, float]) -> Crop | None:
+    """Where the game picture sits on the main display, given its window.
+
+    The game always draws 16:9, centred in its window with black bars for
+    the rest (measured fullscreen on a 1710x1107 display: picture at
+    y=174..2099 of 2214 pixels, this predicts 179..2103). Returns None when
+    cropping would gain nothing or the window isn't on the main display.
+    """
+    display_w, display_h = display
+    x, y, w, h = window
+    picture_w = min(w, h * 16 / 9)
+    picture_h = picture_w * 9 / 16
+    left = x + (w - picture_w) / 2
+    top = y + (h - picture_h) / 2
+    if left < 0 or top < 0 or left + picture_w > display_w or top + picture_h > display_h:
+        return None
+    if picture_w * picture_h > 0.98 * display_w * display_h:
+        return None
+    return (left / display_w, top / display_h, picture_w / display_w, picture_h / display_h)
+
+
+def game_crop(app_name: str = GAME_APP_NAME) -> Crop | None:
+    """The part of the main display showing the game, or None if the game
+    isn't open (or anything about asking goes wrong — then record it all)."""
+    try:
+        result = subprocess.run(
+            ["osascript", "-l", "JavaScript", "-e", _WINDOW_SCRIPT, app_name],
+            capture_output=True, text=True, timeout=5, check=True,
+        )
+        info = json.loads(result.stdout)
+        windows = [(b["X"], b["Y"], b["Width"], b["Height"]) for b in info["windows"]]
+        if not windows:
+            return None
+        # The game window is the big one; the app also owns thin bar windows.
+        window = max(windows, key=lambda b: b[2] * b[3])
+        return fit_game_area(tuple(info["display"]), window)
+    except (OSError, subprocess.SubprocessError, ValueError, KeyError, TypeError):
+        return None
+
+
 def add_mark(video_path: Path, offset_seconds: float) -> list[float]:
     """Remember a moment flagged while recording, in the video's sidecar, so
     it survives until the match is logged. Returns all marks so far."""
@@ -150,10 +208,18 @@ def build_ffmpeg_command(
     capture_cursor: bool = True,
     max_width: int = 1920,
     audio_index: int | None = None,
+    crop: Crop | None = None,
 ) -> list[str]:
     """`audio_index` adds a microphone to the recording, for talking
-    through your plays while you make them."""
+    through your plays while you make them. `crop` keeps only that part of
+    the screen (see `game_crop`)."""
     audio = [] if audio_index is None else ["-c:a", "aac", "-b:a", "128k"]
+    # Cropping raw frames is free (it only moves pointers), so it goes
+    # before the upload to the GPU.
+    crop_filter = ""
+    if crop is not None:
+        x, y, w, h = (f"{value:.5f}" for value in crop)
+        crop_filter = f"crop=iw*{w}:ih*{h}:iw*{x}:ih*{y},"
     return [
         ffmpeg,
         # Needed by hwupload/scale_vt in the filter chain below.
@@ -221,7 +287,7 @@ def build_ffmpeg_command(
         # CPU per 8s captured), and with the game running alongside that is
         # what makes the pipeline fall behind and drop frames mid-animation.
         "-vf",
-        f"format=nv12,hwupload,scale_vt=w='min({max_width},iw)':h=-2",
+        f"{crop_filter}format=nv12,hwupload,scale_vt=w='min({max_width},iw)':h=-2",
         *audio,
         "-movflags",
         "+faststart",
@@ -300,6 +366,7 @@ def start_recording(
     capture_cursor: bool = True,
     max_width: int = 1920,
     audio_index: int | None = None,
+    crop: Crop | None = None,
 ) -> Recording:
     """Start recording in the background; call `.stop()` on the result.
 
@@ -315,7 +382,7 @@ def start_recording(
     _write_sidecar(video_path, device_index, framerate, started_at)
 
     cmd = build_ffmpeg_command(
-        ffmpeg, device_index, video_path, framerate, capture_cursor, max_width, audio_index
+        ffmpeg, device_index, video_path, framerate, capture_cursor, max_width, audio_index, crop
     )
     cmd[1:1] = ["-hide_banner", "-nostats"]
     with log_path.open("wb") as log:
