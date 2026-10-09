@@ -81,6 +81,13 @@
     .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 16px; }
     .panel.highlight { border-color: var(--accent); }
     .muted { color: var(--muted); }
+    button.busy { cursor: progress; opacity: 0.85; }
+    button.busy::before {
+      content: ""; display: inline-block; width: 0.8em; height: 0.8em; margin-right: 8px; vertical-align: -1px;
+      border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
   </style>
 </head>
 <body>
@@ -98,5 +105,29 @@
   <main class="{% block main_class %}{% endblock %}">
     {% block content %}{% endblock %}
   </main>
+  <script>
+    // Some buttons start work that takes a few seconds before the page
+    // comes back (starting the recorder, finishing the video file). Show
+    // that it was heard: the button says what is happening and can't be
+    // pressed twice.
+    document.querySelectorAll('form').forEach((form) => {
+      const button = form.querySelector('button[data-busy]');
+      if (!button) return;
+      button.dataset.label = button.textContent;
+      form.addEventListener('submit', () => {
+        button.disabled = true;
+        button.classList.add('busy');
+        button.textContent = button.dataset.busy;
+      });
+    });
+    // Coming back with the Back button shows the page as it was left.
+    window.addEventListener('pageshow', () => {
+      document.querySelectorAll('button.busy').forEach((button) => {
+        button.disabled = false;
+        button.classList.remove('busy');
+        button.textContent = button.dataset.label;
+      });
+    });
+  </script>
 </body>
 </html>

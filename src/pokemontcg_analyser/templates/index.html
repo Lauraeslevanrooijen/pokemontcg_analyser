@@ -28,7 +28,7 @@
         <span id="rec-elapsed" class="muted" data-started="{{ recording.started_at.isoformat() }}"></span>
         <span class="muted" style="flex: 1;">{{ recording.video_path.name }}</span>
         <button type="button" class="secondary" id="mark-button" title="Flag this moment to look at later (M)">Mark moment</button>
-        <button type="submit" class="stop">Stop recording</button>
+        <button type="submit" class="stop" data-busy="Saving the recording…">Stop recording</button>
       </form>
       <p class="muted" style="font-size: 0.85em; margin: 8px 0 0;">
         <span id="mark-count">{{ marks }}</span> marked. Press <strong>M</strong> or the button while this page has
@@ -74,7 +74,7 @@
             {% for d in microphones %}<option value="{{ d.name }}" {{ 'selected' if 'MacBook' in d.name else '' }}>{{ d.name }}</option>{% endfor %}
           </select>
         {% endif %}
-        <button type="submit">Start recording</button>
+        <button type="submit" data-busy="Starting the recording…">Start recording</button>
       </form>
       {% if microphones %}
         <script>
@@ -142,7 +142,7 @@
             {% endfor %}
           </select>
         {% endif %}
-        <button type="submit">Log match</button>
+        <button type="submit" data-busy="Logging…">Log match</button>
         <details style="grid-column: 1 / -1;">
           <summary class="muted" style="cursor: pointer; font-size: 0.85em;">Paste the battle log (optional)</summary>
           <p class="muted" style="font-size: 0.8em; margin: 6px 0;">
