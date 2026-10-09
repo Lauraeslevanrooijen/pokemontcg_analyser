@@ -111,6 +111,14 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Pokémon TCG Live analyser", lifespan=lifespan)
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
+
+def _localtime(played_at_utc: str) -> str:
+    """A stored UTC time as the clock on this Mac shows it."""
+    return datetime.fromisoformat(played_at_utc).astimezone().strftime("%Y-%m-%d %H:%M")
+
+
+templates.env.filters["localtime"] = _localtime
+
 RECORDINGS_DIR.mkdir(exist_ok=True)
 app.mount("/media", StaticFiles(directory=str(RECORDINGS_DIR)), name="media")
 
@@ -201,7 +209,9 @@ def run_backup() -> Path | None:
     today = BACKUP_DIR / f"matches-{datetime.now().strftime('%Y-%m-%d')}.db"
     try:
         if not today.exists():
-            if not db_path().exists():
+            # Nothing logged yet is nothing worth a copy (and a fresh
+            # install must not become "today's backup" of another one).
+            if not db_path().exists() or not storage.list_matches(db_path=db_path()):
                 return None
             storage.backup_database(today, db_path=db_path())
             for old in sorted(BACKUP_DIR.glob("matches-*.db"))[:-BACKUPS_KEPT]:

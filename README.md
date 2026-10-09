@@ -86,6 +86,41 @@ Early scaffold. Working today:
 Not built yet: card recognition (matching video frames to specific cards)
 and automatic win/loss detection.
 
+## Install the app (no setup needed)
+
+For playing and reviewing, you don't need anything from the rest of this
+page. The app is a single download with everything inside it.
+
+It needs a Mac with an Apple chip (M1 or newer) and macOS 14 or later.
+
+1. Download `Pokemon TCG Analyser.dmg` from the Releases page of this
+   repository and open it.
+2. Drag **Pokemon TCG Analyser** onto the **Applications** folder next to it.
+3. Open it from Applications. The first time, macOS says it cannot check
+   the app and refuses: the app is not signed with a paid Apple developer
+   account. Open **System Settings > Privacy & Security**, scroll down to
+   the message about Pokemon TCG Analyser and click **Open Anyway**. This is
+   only needed once.
+4. Click **Start recording**. macOS asks for permission to record the
+   screen. Allow it, quit the app (Cmd+Q) and open it again. From then on
+   recording works. If the request does not appear, the app shows the steps.
+
+Then: start a recording, play a match in Pokémon TCG Live, stop the
+recording, and log the match. Before leaving the game's summary screen,
+copy the battle log there and paste it in when logging.
+
+Good to know:
+
+- Everything stays on your Mac, in `Library/Application Support/Pokemon TCG
+  Analyser` in your home folder. Nothing is sent anywhere, apart from
+  fetching card pictures from TCGdex.
+- Spoken notes are saved but not written out as text in this version.
+- To update, download the new `.dmg` and replace the app. Your matches stay.
+
+To build the `.dmg` yourself from a checkout: `pip install -e ".[package]"`
+and `python packaging/build.py` (needs the Swift compiler, `xcode-select
+--install`). The result is in `dist/`.
+
 ## Setup
 
 Requires Python 3.11+ and `ffmpeg` (`brew install ffmpeg`).
@@ -154,7 +189,9 @@ src/pokemontcg_analyser/
   turns.py      turn detection from the ring around the board
   transcribe.py spoken notes to text (faster-whisper, optional)
   desktop.py    desktop-app window + macOS .app launcher
+  capture/      the ScreenCaptureKit screen recorder (Swift)
   templates/    review app HTML
   cli.py        command-line entry point
+packaging/      recipe and script for the standalone app and .dmg
 tests/
 ```

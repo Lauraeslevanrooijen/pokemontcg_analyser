@@ -116,6 +116,10 @@ final class Recorder: NSObject, SCStreamOutput, SCStreamDelegate {
             guard let device = devices.first(where: { $0.localizedName == name }) else {
                 fail("microphone not found: \(name)")
             }
+            // Recording a microphone into the stream came with macOS 15.
+            guard #available(macOS 15.0, *) else {
+                fail("recording your voice needs macOS 15 or later")
+            }
             config.captureMicrophone = true
             config.microphoneCaptureDeviceID = device.uniqueID
         }
@@ -159,7 +163,7 @@ final class Recorder: NSObject, SCStreamOutput, SCStreamDelegate {
 
         let stream = SCStream(filter: filter, configuration: config, delegate: self)
         try stream.addStreamOutput(self, type: .screen, sampleHandlerQueue: queue)
-        if options.microphone != nil {
+        if options.microphone != nil, #available(macOS 15.0, *) {
             try stream.addStreamOutput(self, type: .microphone, sampleHandlerQueue: queue)
         }
         self.stream = stream

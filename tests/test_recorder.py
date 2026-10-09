@@ -1,3 +1,4 @@
+from pathlib import Path
 from unittest.mock import patch
 
 from pokemontcg_analyser import recorder
@@ -249,3 +250,30 @@ def test_stop_twice_and_with_a_deaf_process(tmp_path) -> None:
     recording.stop(timeout=0.2)  # nothing left to do, and no error
 
     assert not recording.is_running
+
+
+def test_video_duration_is_read_from_ffmpeg_output(monkeypatch) -> None:
+    report = "Input #0, mov,mp4\n  Duration: 00:07:23.20, start: 0.000000, bitrate: 1846 kb/s\n"
+    monkeypatch.setattr(recorder, "require_ffmpeg", lambda: "ffmpeg")
+    with patch("pokemontcg_analyser.recorder.subprocess.run", return_value=_FakeResult(report)):
+        assert recorder.video_duration(Path("x.mp4")) == 443.2
+
+    with patch("pokemontcg_analyser.recorder.subprocess.run", return_value=_FakeResult("no such file")):
+        try:
+            recorder.video_duration(Path("x.mp4"))
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("expected ValueError")
+
+
+def test_bundled_tools_are_preferred(tmp_path, monkeypatch) -> None:
+    ffmpeg = tmp_path / "ffmpeg"
+    ffmpeg.write_text("")
+    monkeypatch.setattr(recorder, "BUNDLED_FFMPEG", ffmpeg)
+    helper = tmp_path / "ptcg-capture"
+    helper.write_text("")
+    monkeypatch.setattr(recorder, "BUNDLED_CAPTURE_HELPER", helper)
+
+    assert recorder.require_ffmpeg() == str(ffmpeg)
+    assert recorder.capture_helper_path() == helper

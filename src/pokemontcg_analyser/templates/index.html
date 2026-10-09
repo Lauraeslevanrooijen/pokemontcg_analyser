@@ -8,7 +8,7 @@
         <ol style="margin: 8px 0; padding-left: 20px;">
           <li>Open <em>System Settings &rarr; Privacy &amp; Security &rarr; Screen &amp; System Audio Recording</em>.</li>
           <li>Switch on <strong>Pokemon TCG Analyser</strong>. If it is not in the list, add it with the + button
-              (it is in the Applications folder inside your home folder).</li>
+              and pick it from your Applications folder.</li>
           <li>Quit this app with Cmd+Q and open it again &mdash; the permission only counts after a restart.</li>
         </ol>
         <form method="post" action="/recording/open-settings">
@@ -199,7 +199,7 @@
       <tbody>
         {% for m in matches %}
           <tr class="clickable" onclick="window.location='/matches/{{ m.id }}'">
-            <td style="white-space: nowrap;">{{ m.played_at_utc[:16].replace('T', ' ') }}</td>
+            <td style="white-space: nowrap;">{{ m.played_at_utc|localtime }}</td>
             <td>{{ m.deck }}</td>
             <td>{{ m.opponent_deck or '—' }}</td>
             <td style="white-space: nowrap;">
@@ -243,13 +243,15 @@
       </select>
       <span>Battle logs, notes and stats are kept; only the video goes.</span>
     </form>
-    <p>
-      {% if backup %}
-        Backed up today to {{ backup_dir }} (database and spoken notes; recordings are not included).
-      {% else %}
-        The backup to {{ backup_dir }} did not work today.
-      {% endif %}
-    </p>
+    {% if total_matches %}
+      <p>
+        {% if backup %}
+          Backed up today to {{ backup_dir }} (database and spoken notes; recordings are not included).
+        {% else %}
+          The backup to {{ backup_dir }} did not work today.
+        {% endif %}
+      </p>
+    {% endif %}
   </div>
   <script>
     const logPaste = document.getElementById('log-paste');

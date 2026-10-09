@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import threading
@@ -37,7 +38,14 @@ class ScreenRecordingPermissionError(RuntimeError):
         super().__init__("macOS has not allowed this app to record the screen.")
 
 
+# In the packaged app, ffmpeg and the recorder sit inside the app itself.
+BUNDLED_FFMPEG = Path(__file__).parent / "bin" / "ffmpeg"
+BUNDLED_CAPTURE_HELPER = Path(__file__).parent / "bin" / "ptcg-capture"
+
+
 def require_ffmpeg() -> str:
+    if BUNDLED_FFMPEG.exists():
+        return str(BUNDLED_FFMPEG)
     path = shutil.which("ffmpeg")
     if path is None:
         raise FfmpegNotFoundError()
@@ -387,11 +395,16 @@ class Recording:
 
 CAPTURE_SOURCE = Path(__file__).parent / "capture" / "main.swift"
 CAPTURE_CACHE_DIR = Path.home() / "Library" / "Caches" / "pokemontcg-analyser"
+# Built to run on macOS 14 and later, whatever the machine it is built on.
+SWIFT_FLAGS = ["-O", "-swift-version", "5", "-target", "arm64-apple-macos14.0"]
 
 
 def capture_helper_path() -> Path:
-    """Where the compiled ScreenCaptureKit recorder lives. The name carries
-    a hash of its source, so editing the source means a fresh build."""
+    """Where the compiled ScreenCaptureKit recorder lives: inside the
+    packaged app, or else in the cache, under a name that carries a hash
+    of its source so editing the source means a fresh build."""
+    if BUNDLED_CAPTURE_HELPER.exists():
+        return BUNDLED_CAPTURE_HELPER
     digest = hashlib.sha1(CAPTURE_SOURCE.read_bytes()).hexdigest()[:12]
     return CAPTURE_CACHE_DIR / f"ptcg-capture-{digest}"
 
@@ -409,7 +422,7 @@ def build_capture_helper() -> Path | None:
     CAPTURE_CACHE_DIR.mkdir(parents=True, exist_ok=True)
     building = helper.with_suffix(f".building{os.getpid()}")
     result = subprocess.run(
-        [swiftc, "-O", "-swift-version", "5", "-o", str(building), str(CAPTURE_SOURCE)],
+        [swiftc, *SWIFT_FLAGS, "-o", str(building), str(CAPTURE_SOURCE)],
         capture_output=True,
     )
     if result.returncode != 0 or not building.exists():
@@ -518,16 +531,18 @@ ORIGINALS_DIRNAME = "originals"
 
 
 def video_duration(video_path: Path) -> float:
-    ffprobe = shutil.which("ffprobe")
-    if ffprobe is None:
-        raise FfmpegNotFoundError()
+    """Length of a video in seconds, read from what ffmpeg reports about
+    the file (so no separate ffprobe is needed)."""
     result = subprocess.run(
-        [ffprobe, "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", str(video_path)],
+        [require_ffmpeg(), "-hide_banner", "-i", str(video_path)],
         capture_output=True,
         text=True,
-        check=True,
     )
-    return float(result.stdout.strip())
+    found = re.search(r"Duration: (\d+):(\d+):(\d+(?:\.\d+)?)", result.stderr)
+    if found is None:
+        raise ValueError(f"Could not read the length of {video_path}")
+    hours, minutes, seconds = found.groups()
+    return int(hours) * 3600 + int(minutes) * 60 + float(seconds)
 
 
 def trim_start(video_path: Path, start_seconds: float) -> float:

@@ -1060,3 +1060,10 @@ def test_misplay_words_and_recent_opponents(client: TestClient) -> None:
 
     weeks = client.get("/weeks").text
     assert "Sessions" in weeks and "over 3 games" in weeks
+
+
+def test_an_empty_database_is_not_backed_up(client: TestClient) -> None:
+    page = client.get("/").text
+
+    assert list(webapp.BACKUP_DIR.glob("matches-*.db")) == []
+    assert "Backed up" not in page and "did not work" not in page

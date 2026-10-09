@@ -1,9 +1,11 @@
 """Run the web app as a desktop app: its own window, no terminal.
 
-The window is a Chromium-family browser in "app mode" (no tabs or address
-bar) with a profile of its own, so it behaves like a separate application
-and quitting it (Cmd+Q) is what shuts the local server down again.
-`install_app` wraps that in a double-clickable macOS .app bundle.
+Two ways of showing the window. The packaged app (see packaging/) opens a
+native one, so it needs nothing else installed. Run from a checkout, the
+window is a Chromium-family browser in "app mode" (no tabs or address bar)
+with a profile of its own; `install_app` wraps that in a double-clickable
+launcher. Either way, quitting the window is what shuts the local server
+down again.
 """
 
 from __future__ import annotations
@@ -65,6 +67,50 @@ def open_window(url: str, profile_dir: Path) -> subprocess.Popen | None:
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
+
+
+# Where the packaged app keeps the database, recordings and card pictures.
+PACKAGED_DATA_DIR = Path.home() / "Library" / "Application Support" / APP_NAME
+# Not 8000: someone else's Mac may well have something there already.
+PACKAGED_PORT = 8642
+
+
+def run_packaged() -> None:
+    """Entry point of the packaged app: a fixed data folder, a native
+    window, and the server's output in a log file next to the data."""
+    data_dir = PACKAGED_DATA_DIR
+    (data_dir / "data").mkdir(parents=True, exist_ok=True)
+    log = (data_dir / "data" / "app.log").open("a", buffering=1)
+    sys.stdout = sys.stderr = log
+    run_native(port=PACKAGED_PORT, data_dir=data_dir)
+
+
+def run_native(port: int, data_dir: Path) -> None:
+    """Serve the app and show it in a native window (pywebview) until the
+    window is closed."""
+    import uvicorn
+    import webview
+
+    data_dir.mkdir(parents=True, exist_ok=True)
+    os.chdir(data_dir)
+    if is_serving(port):
+        return  # already open; macOS brings the running app forward
+    from . import webapp  # after chdir: it resolves its folders on import
+
+    server = uvicorn.Server(uvicorn.Config(webapp.app, host="127.0.0.1", port=port))
+    serving = threading.Thread(target=server.run, daemon=True)
+    serving.start()
+    while not server.started and serving.is_alive():
+        time.sleep(0.05)
+
+    # Lets "Download this match as text" save a file.
+    webview.settings["ALLOW_DOWNLOADS"] = True
+    webview.create_window(APP_NAME, f"http://127.0.0.1:{port}", width=1500, height=950, min_size=(900, 600))
+    webview.start()  # returns when the window is closed
+    # Stopping through uvicorn runs the app's shutdown, which finalizes a
+    # recording that is still in progress.
+    server.should_exit = True
+    serving.join(timeout=20)
 
 
 def run(port: int = 8000, data_dir: Path | None = None) -> None:
