@@ -24,30 +24,41 @@ SAMPLE_FPS = 4
 # The enlarged card is about 82 of the picture's 480 pixels wide; cards
 # shown while searching the deck are a little smaller.
 CARD_WIDTHS = (74, 82)
+# The opponent's played cards are shown a little larger than my own.
+OPPONENT_CARD_WIDTHS = (82, 90)
 CARD_ASPECT = 0.716  # width / height of a card
 # Normalised correlation of the card picture against the frame. Played
 # cards score 0.76-0.88; other cards that happen to be on screen reach
 # about 0.64.
 MIN_SCORE = 0.72
 
-Play = tuple[int, Path]  # the action's position in its turn, and the card's picture
+# The action's position in its turn, and pictures of the card. One picture
+# when the printing is known (my own deck); a few candidates when only the
+# name is (the opponent's cards).
+Play = tuple[int, tuple[Path, ...]]
 
 
-def _templates(image_path: Path) -> list[np.ndarray]:
-    image = cv2.imread(str(image_path), cv2.IMREAD_GRAYSCALE)
-    if image is None:
-        return []
-    return [
-        cv2.resize(image, (width, round(width / CARD_ASPECT)), interpolation=cv2.INTER_AREA)
-        for width in CARD_WIDTHS
-    ]
+def _templates(image_paths: tuple[Path, ...]) -> list[np.ndarray]:
+    # Several candidate pictures means a card known by name only: the
+    # opponent's.
+    widths = OPPONENT_CARD_WIDTHS if len(image_paths) > 1 else CARD_WIDTHS
+    templates = []
+    for image_path in image_paths:
+        image = cv2.imread(str(image_path), cv2.IMREAD_GRAYSCALE)
+        if image is None:
+            continue
+        templates += [
+            cv2.resize(image, (width, round(width / CARD_ASPECT)), interpolation=cv2.INTER_AREA)
+            for width in widths
+        ]
+    return templates
 
 
 def _locate(frames: list[np.ndarray], start: float, plays: list[Play]) -> dict[int, float]:
     """Times of one turn's plays, given that turn's frames (grayscale)."""
     found: dict[int, float] = {}
     earliest = 0  # frame index the next play is searched from
-    previous: Path | None = None  # the card found last
+    previous: tuple[Path, ...] | None = None  # the card found last
     for action, image_path in plays:
         templates = _templates(image_path)
         if not templates:

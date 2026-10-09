@@ -19,7 +19,7 @@ def _frame(card: Path | None) -> np.ndarray:
     """The game picture, with a card shown enlarged if given."""
     frame = np.full((270, 480), 40, dtype=np.uint8)
     if card is not None:
-        shown = logtimes._templates(card)[1]  # at the size a played card has
+        shown = logtimes._templates((card,))[1]  # at the size a played card has
         frame[80 : 80 + shown.shape[0], 200 : 200 + shown.shape[1]] = shown
     return frame
 
@@ -29,7 +29,7 @@ def test_plays_are_found_in_order(tmp_path: Path) -> None:
     # 2s nothing, 1s Ultra Ball, 2s nothing, 1s Poké Pad
     frames = [_frame(None)] * 8 + [_frame(ball)] * 4 + [_frame(None)] * 8 + [_frame(pad)] * 4
 
-    found = logtimes._locate(frames, start=100.0, plays=[(1, ball), (3, pad)])
+    found = logtimes._locate(frames, start=100.0, plays=[(1, (ball,)), (3, (pad,))])
 
     assert found == {1: 102.0, 3: 105.0}
 
@@ -38,7 +38,7 @@ def test_a_play_that_never_shows_is_left_without_a_time(tmp_path: Path) -> None:
     ball, pad, hammer = (_card(tmp_path, n, i) for i, n in enumerate(["ball", "pad", "hammer"]))
     frames = [_frame(ball)] * 4 + [_frame(None)] * 4 + [_frame(pad)] * 4
 
-    found = logtimes._locate(frames, start=0.0, plays=[(0, ball), (1, hammer), (2, pad)])
+    found = logtimes._locate(frames, start=0.0, plays=[(0, (ball,)), (1, (hammer,)), (2, (pad,))])
 
     assert found == {0: 0.0, 2: 2.0}
 
@@ -47,9 +47,18 @@ def test_two_copies_of_a_card_get_two_moments(tmp_path: Path) -> None:
     hammer = _card(tmp_path, "hammer", 3)
     frames = [_frame(hammer)] * 4 + [_frame(None)] * 4 + [_frame(hammer)] * 4
 
-    found = logtimes._locate(frames, start=0.0, plays=[(0, hammer), (1, hammer)])
+    found = logtimes._locate(frames, start=0.0, plays=[(0, (hammer,)), (1, (hammer,))])
 
     assert found == {0: 0.0, 1: 2.0}
     # only one showing: the second copy has no moment of its own
-    once = logtimes._locate(frames[:8], start=0.0, plays=[(0, hammer), (1, hammer)])
+    once = logtimes._locate(frames[:8], start=0.0, plays=[(0, (hammer,)), (1, (hammer,))])
     assert once == {0: 0.0}
+
+
+def test_a_card_known_by_name_matches_on_any_of_its_printings(tmp_path: Path) -> None:
+    old_art, new_art = _card(tmp_path, "old", 7), _card(tmp_path, "new", 8)
+    frames = [_frame(None)] * 4 + [_frame(new_art)] * 4
+
+    found = logtimes._locate(frames, start=0.0, plays=[(0, (old_art, new_art))])
+
+    assert found == {0: 1.0}

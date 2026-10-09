@@ -24,6 +24,9 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
     # No test should read a real video; those that want turns say so.
     monkeypatch.setattr(turns, "detect_turns", lambda path: [])
     monkeypatch.setattr(logtimes, "find_play_times", lambda *args: {})
+    # The card database is on the internet; tests that need a card say so.
+    monkeypatch.setattr(cards, "lookup", lambda set_code, number: None)
+    monkeypatch.setattr(cards, "images_by_name", lambda name: [])
     monkeypatch.setattr(recorder, "video_duration", lambda path: 600.0)
     monkeypatch.setattr(recorder, "game_crop", lambda: None)
     # No test should load the real speech model.
@@ -892,3 +895,82 @@ def test_stats_show_game_length_from_logs_and_markers(client: TestClient) -> Non
 
     assert "All games" in section and ">7.0<" in section  # (4 + 10) / 2
     assert "With Pult" in section and "With Slob" not in section
+
+
+def _log_text() -> str:
+    return (Path(__file__).parent / "data" / "battle_log.txt").read_text()
+
+
+def test_opponents_page_gathers_record_cards_and_note(client: TestClient) -> None:
+    client.post("/matches", data={"deck": "Pult", "result": "win", "battle_log": _log_text()})
+    storage.log_match(deck="Pult", opponent_deck="Dhelmise / Poltchageist", result="loss")
+    client.put("/matchups/note", json={"opponent_deck": "Dhelmise / Poltchageist", "note": "they stall"})
+
+    page = client.get("/opponents").text
+
+    assert "Dhelmise / Poltchageist" in page
+    assert "1&ndash;1&ndash;0" in page
+    assert "they stall" in page
+    assert "Ultra Ball" in page  # what the opponent played, from the log
+
+
+def test_weeks_page_lists_lessons_and_misplays(client: TestClient) -> None:
+    match_id = storage.log_match(deck="Pult", opponent_deck="Tauros", result="loss")
+    storage.set_lesson(match_id, "count prizes first")
+    storage.add_note(match_id, "benched too much", offset_seconds=30.0, label="misplay")
+
+    page = client.get("/weeks").text
+
+    assert "0&ndash;1&ndash;0" in page
+    assert "count prizes first" in page
+    assert "benched too much" in page and "1 Misplay" in page
+    assert f"/matches/{match_id}?t=30.00" in page
+
+
+def test_export_puts_comments_and_notes_where_they_belong(client: TestClient) -> None:
+    client.post(
+        "/matches",
+        data={"deck": "Pult", "opponent_deck": "Banette", "result": "win", "battle_log": _log_text()},
+    )
+    match_id = storage.list_matches()[0].id
+    storage.set_lesson(match_id, "bench Meowth earlier")
+    storage.add_note(match_id, "Poffin first", label="misplay", log_turn=2, log_action=1)
+    storage.replace_turns(match_id, [(60.0, "opponent"), (90.0, "you"), (150.0, "opponent"), (170.0, "you")])
+    storage.add_note(match_id, "slow here", offset_seconds=100.0)
+
+    resp = client.get(f"/matches/{match_id}/export")
+
+    assert resp.headers["content-type"].startswith("text/markdown")
+    assert "attachment" in resp.headers["content-disposition"]
+    text = resp.text
+    assert text.startswith("# Pult vs Banette — win")
+    assert "**Lesson:** bench Meowth earlier" in text
+    assert "## Turn 2 — you (1:30)" in text
+    turn_two = text[text.index("## Turn 2") : text.index("## Turn 3")]
+    assert "2. Played Buddy-Buddy Poffin.\n   - Drew 2 cards" in turn_two
+    assert "   > [Misplay] Poffin first" in turn_two
+    assert "- Note at 1:40: slow here" in turn_two
+
+
+def test_spoken_comment_on_a_log_line(client: TestClient) -> None:
+    match_id = storage.log_match(deck="Pult", result="win")
+
+    note = client.post(
+        f"/matches/{match_id}/voice",
+        files={"audio": ("note", b"opus", "audio/webm")},
+        data={"log_turn": "3", "log_action": "1", "label": "key"},
+    ).json()
+
+    assert (note["log_turn"], note["log_action"], note["label"]) == (3, 1, "key")
+    assert note["offset_seconds"] is None and note["audio_url"]
+
+
+def test_stats_show_first_prize_setup_and_turn_activity(client: TestClient) -> None:
+    client.post("/matches", data={"deck": "Pult", "result": "win", "battle_log": _log_text()})
+
+    page = client.get("/stats").text
+    section = page[page.index("How your games go") :]
+
+    assert "Nobody (game ended first)" in section  # no Prize card was taken in this log
+    assert "Drakloak" in section and "Dudunsparce" in section  # what I evolved into
+    assert "Without attaching an Energy" in section

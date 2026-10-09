@@ -169,3 +169,19 @@ def test_cards_played_and_seen() -> None:
         "Pikachu", "Iono", "Nest Ball", "Raichu", "Basic Lightning Energy", "Switch",
     }
     assert log.cards_played("Gary") == {"Abra": 1, "Kadabra": 1, "Alakazam": 1, "Dusclops": 1}
+
+
+def test_first_prize_setup_turn_and_turn_activity() -> None:
+    log = battlelog.parse(LONGER)
+
+    assert log.first_prize() == (1, "you")
+    assert battlelog.parse(LOG).first_prize() is None
+
+    real = battlelog.parse(LOG)
+    assert real.final_forms(real.me) == ["Drakloak", "Dudunsparce"]
+    assert real.first_in_play(real.me, "Drakloak") == 2  # my second turn
+    assert real.first_in_play(real.me, "Dragapult ex") is None
+    assert real.turn_activity(real.me) == [
+        {"turn": 1, "attached": True, "attacked": True},
+        {"turn": 2, "attached": False, "attacked": False},
+    ]

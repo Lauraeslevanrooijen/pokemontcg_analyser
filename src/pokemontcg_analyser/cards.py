@@ -190,3 +190,38 @@ def sync(printings: list[tuple[str, str]], cache_dir: Path = DEFAULT_CACHE_DIR) 
     with ThreadPoolExecutor(8) as pool:
         paths = list(pool.map(lambda p: image_path(p[0], p[1], cache_dir), dict.fromkeys(printings)))
     return sum(path is not None for path in paths)
+
+
+def images_by_name(name: str, limit: int = 5, cache_dir: Path = DEFAULT_CACHE_DIR) -> list[Path]:
+    """Pictures of a card known only by name, as for an opponent's cards in
+    a battle log: its newest few printings in the main card game, any of
+    which may be the one that was played. Empty when it can't be found."""
+    path = cache_dir / "cards.json"
+    key = f"name:{name}"
+    with _lock:
+        known = _read(path).get(key)
+    if known is None:
+        try:
+            with _client() as client:
+                printings = client.get("/cards", params={"name": f"eq:{name}"}).raise_for_status().json()
+        except httpx.HTTPError:
+            return []
+        usable = [p for p in printings if p.get("image") and p["id"][:1].islower()]
+        known = [{"id": p["id"], "image": p["image"]} for p in usable[-limit:]]
+        with _lock:
+            cached = _read(path)
+            cached[key] = known
+            _write(path, cached)
+    pictures = []
+    for printing in known:
+        target = cache_dir / "images" / f"{printing['id']}.webp"
+        if not target.exists():
+            try:
+                with _image_client() as client:
+                    content = client.get(f"{printing['image']}/{IMAGE_VARIANT}").raise_for_status().content
+            except httpx.HTTPError:
+                continue
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(content)
+        pictures.append(target)
+    return pictures

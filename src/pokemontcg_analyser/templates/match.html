@@ -647,6 +647,8 @@
       if (event.label && LABELS[event.label]) {
         body.appendChild(el('span', `chip label-${event.label}`, LABELS[event.label]));
       }
+      if (event.audio_url) body.appendChild(voiceButton(event));
+      if (event.transcribing && !event.detail) body.appendChild(el('span', 'muted', 'writing it out…'));
       if (event.detail) body.appendChild(el('span', '', event.detail));
       row.append(body, actionButtons(event));
       return row;
@@ -661,11 +663,61 @@
       input.placeholder = 'Comment on this line';
       const save = el('button', '', 'Save');
       save.type = 'submit';
+      const speak = el('button', 'secondary', '\u{1F399} Speak');
+      speak.type = 'button';
+      speak.title = 'Say the comment instead; click again to save it';
       const cancel = el('button', 'secondary', 'Cancel');
       cancel.type = 'button';
-      const close = () => { commentingAt = null; render(); };
+      let spoken = null;  // { recorder, stream, chunks } while speaking
+      const close = () => {
+        if (spoken) {
+          spoken.discard = true;
+          spoken.recorder.stop();
+        }
+        commentingAt = null;
+        render();
+      };
       cancel.addEventListener('click', close);
       form.addEventListener('keydown', (ev) => { if (ev.key === 'Escape') close(); });
+      speak.addEventListener('click', async () => {
+        if (spoken) return spoken.recorder.stop();
+        let stream;
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        } catch (err) {
+          alert('Could not use the microphone: ' + err.message);
+          return;
+        }
+        if (player) player.pause();
+        voicePlayer.pause();
+        const mediaRecorder = new MediaRecorder(stream);
+        const mine = { recorder: mediaRecorder, stream, chunks: [], discard: false };
+        spoken = mine;
+        speak.textContent = '\u25A0 Save';
+        speak.classList.add('stop');
+        mediaRecorder.addEventListener('dataavailable', (ev) => mine.chunks.push(ev.data));
+        mediaRecorder.addEventListener('stop', async () => {
+          stream.getTracks().forEach((track) => track.stop());
+          spoken = null;
+          if (mine.discard) return;
+          const body = new FormData();
+          body.append('audio', new Blob(mine.chunks, { type: mediaRecorder.mimeType || 'audio/webm' }), 'note');
+          body.append('log_turn', turn);
+          body.append('log_action', action);
+          if (select.value) body.append('label', select.value);
+          const resp = await fetch(`/matches/${matchId}/voice`, { method: 'POST', body });
+          if (!resp.ok) {
+            alert('Could not save the voice note.');
+            return;
+          }
+          const note = await resp.json();
+          events.push(note);
+          commentingAt = null;
+          render();
+          if (note.transcribing) followTranscription(note);
+        });
+        mediaRecorder.start();
+      });
       form.addEventListener('submit', async (ev) => {
         ev.preventDefault();
         const text = input.value.trim();
@@ -678,7 +730,7 @@
         events.push(note);
         close();
       });
-      form.append(select, input, save, cancel);
+      form.append(select, input, save, speak, cancel);
       setTimeout(() => input.focus());
       return form;
     }

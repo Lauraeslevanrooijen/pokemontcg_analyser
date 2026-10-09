@@ -82,3 +82,21 @@ def test_sections_without_headers_still_lists_the_cards() -> None:
 
     assert only.title == ""
     assert only.cards == [decks.ListedCard(4, "Dragapult ex", "TWM 130"), decks.ListedCard(3, "Iono", "")]
+
+
+def test_opening_odds_from_the_list() -> None:
+    lines = "4 Dreepy TWM 128\n2 Budew PRE 4\n8 Iono PAL 185\n46 Basic Fire Energy MEE 2"
+    kinds = {"Dreepy": "Basic Pokémon", "Budew": "Basic Pokémon", "Iono": "Supporter", "Basic Fire Energy": "Energy"}
+
+    odds = dict(decks.opening_odds(lines, kinds))
+
+    # 6 Basics in 60: C(54,7)/C(60,7)
+    assert round(odds["No Basic Pokémon (a mulligan)"], 3) == 0.459
+    assert round(odds["At least one Dreepy"], 3) == 0.399
+    assert round(odds["No Supporter"], 3) == 0.346
+    assert list(odds)[3] == "At least one Dreepy"  # most copies first
+
+    # a card of unknown kind: no claims about "no Supporter", only per-card odds
+    partial = dict(decks.opening_odds(lines, {"Dreepy": "Basic Pokémon"}))
+    assert list(partial) == ["At least one Dreepy"]
+    assert decks.opening_odds("2 Dreepy", kinds) == []

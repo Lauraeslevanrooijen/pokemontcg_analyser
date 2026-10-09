@@ -1154,8 +1154,12 @@ async def add_voice_note(
     match_id: int,
     audio: UploadFile = File(...),
     offset_seconds: float | None = Form(None),
+    log_turn: int | None = Form(None),
+    log_action: int | None = Form(None),
+    label: storage.Label | None = Form(None),
 ):
-    """Save a spoken note recorded in the browser."""
+    """Save a spoken note recorded in the browser: at a moment in the
+    video, or as a comment on a line of the battle log."""
     _require_match(match_id)
     container = (audio.content_type or "").split(";")[0].strip().lower()
     extension = VOICE_EXTENSIONS.get(container)
@@ -1175,7 +1179,10 @@ async def add_voice_note(
         match_id,
         "note",
         offset_seconds=offset_seconds,
+        label=label,
         audio_file=filename,
+        log_turn=log_turn,
+        log_action=log_action,
         db_path=db_path(),
     )
     if transcribe.available():
@@ -1241,9 +1248,10 @@ def _store_detected_turns(match_id: int, replace: bool) -> list[turns.Turn]:
 
 def _store_log_times(match_id: int) -> None:
     """Find where the plays of the battle log happen in the recording.
-    Needs the log's turns to line up one to one with the turn markers, and
-    the deck's saved list for the card pictures; only my own plays are
-    looked for, as the opponent's cards have no known printing."""
+    Needs the log's turns to line up one to one with the turn markers. My
+    own cards are matched by the printing in the deck's saved list; the
+    opponent's are known by name only, so their newest few printings are
+    all tried."""
     with _video_lock:
         match = storage.get_match(match_id, db_path=db_path())
         if match is None or not match.video_file or not match.battle_log:
@@ -1263,16 +1271,15 @@ def _store_log_times(match_id: int) -> None:
         plays: list[list[logtimes.Play]] = []
         for turn in log.turns:
             turn_plays = []
-            if turn.player == log.me:
-                for action, card in log.plays(turn):
-                    printing = listed.get(card)
-                    picture = (
-                        cards.image_path(printing.set_code, printing.number)
-                        if printing is not None and printing.printing
-                        else None
-                    )
-                    if picture is not None:
-                        turn_plays.append((action, picture))
+            for action, card in log.plays(turn):
+                printing = listed.get(card) if turn.player == log.me else None
+                if printing is not None and printing.printing:
+                    picture = cards.image_path(printing.set_code, printing.number)
+                    pictures = (picture,) if picture is not None else ()
+                else:
+                    pictures = tuple(cards.images_by_name(card))
+                if pictures:
+                    turn_plays.append((action, pictures))
             plays.append(turn_plays)
         found = logtimes.find_play_times(video_path, list(zip(marks, ends)), plays)
         storage.set_log_times(

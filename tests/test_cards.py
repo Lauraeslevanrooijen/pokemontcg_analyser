@@ -89,3 +89,14 @@ def test_card_without_a_scan_borrows_another_printing(tmp_path: Path, tcgdex: li
 
     # first card of the newest main-game set that has one; never TCG Pocket
     assert card.image == "https://assets.example/swsh8/284"
+
+
+def test_images_by_name_takes_the_newest_main_game_printings(tmp_path: Path, tcgdex: list[str]) -> None:
+    pictures = cards.images_by_name("Fire Energy", limit=2, cache_dir=tmp_path)
+
+    # the last two with a picture, and never the TCG Pocket one; only the
+    # one the stand-in server has a file for could be downloaded
+    assert [p.name for p in pictures] == []
+    tcgdex.clear()
+    cards.images_by_name("Fire Energy", limit=2, cache_dir=tmp_path)
+    assert "/cards" not in tcgdex  # the lookup itself is cached

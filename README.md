@@ -60,6 +60,14 @@ Early scaffold. Working today:
   (`Pokemon TCG Analyser backups`, or Documents without iCloud; set
   `POKEMONTCG_BACKUP_DIR` for another place), keeping 14 days. Recordings
   are not backed up, and can be set to be deleted after a number of weeks.
+- From the battle logs the Stats page also shows who takes the first Prize
+  card and when, in which of your turns your evolutions come into play, and
+  how many of your turns pass without an Energy or an attack; the Decks
+  page compares those per version of a list and gives the opening-hand odds
+  of the current list.
+- Opponents page: per deck played against, your record, your note, and
+  what they played. Weeks page: each week's record, lessons and misplays.
+- A match can be downloaded as a text file with its log, notes and lesson.
 - Decks page: save a decklist per deck with versions; matches count towards
   the version that was current when they were logged, so a change to the
   list shows up as a change in results.
