@@ -18,7 +18,7 @@ Early scaffold. Working today:
 - `serve` — a local web app: start and stop a recording with a button (and
   flag moments while it runs), log the match against it, then play the video
   back and annotate it: labelled notes (misplay, good play, key moment, bad
-  luck), turn markers, who went first, and keyboard shortcuts so you never
+  luck, lucky topdeck, note), turn markers, who went first, and keyboard shortcuts so you never
   leave the video. Spoken notes are recorded with the microphone and
   stored in `recordings/voice/`. Mark where the game itself starts and trim
   the menus before it off the recording (the untrimmed file is kept in

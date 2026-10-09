@@ -973,3 +973,17 @@ def test_stats_show_first_prize_setup_and_turn_activity(client: TestClient) -> N
     assert "Nobody (game ended first)" in section  # no Prize card was taken in this log
     assert "Drakloak" in section and "Dudunsparce" in section  # what I evolved into
     assert "Without attaching an Energy" in section
+
+
+def test_lucky_topdeck_and_note_labels(client: TestClient) -> None:
+    # with a recording, so the page has the label buttons
+    match_id = storage.log_match(deck="Pult", result="win", video_file="recordings/x.mp4")
+
+    for label in ("topdeck", "note"):
+        resp = client.post(f"/matches/{match_id}/notes", json={"label": label, "offset_seconds": 5.0})
+        assert resp.status_code == 200 and resp.json()["label"] == label
+
+    page = client.get(f"/matches/{match_id}").text
+    assert 'data-label="topdeck"' in page and "Lucky topdeck" in page
+    assert 'data-label="note"' in page
+    assert "Lucky topdeck" in client.get("/moments?label=topdeck").text

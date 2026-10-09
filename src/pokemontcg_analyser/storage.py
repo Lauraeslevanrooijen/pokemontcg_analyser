@@ -16,12 +16,14 @@ Result = Literal["win", "loss", "tie"]
 
 TurnOrder = Literal["first", "second"]
 
-Label = Literal["misplay", "good", "key", "luck"]
+Label = Literal["misplay", "good", "key", "luck", "topdeck", "note"]
 LABELS: dict[str, str] = {
     "misplay": "Misplay",
     "good": "Good play",
     "key": "Key moment",
     "luck": "Bad luck",
+    "topdeck": "Lucky topdeck",
+    "note": "Note",
 }
 
 SCHEMA = """

@@ -33,7 +33,9 @@ def test_build_counts_records_and_misplays(tmp_path: Path) -> None:
     assert stats.by_turn_order["unknown"].total == 1
     # the Slob game has no notes, so it does not dilute the averages
     assert stats.reviewed_matches == 2
-    assert stats.label_counts == {"misplay": 3, "good": 1, "key": 0, "luck": 0}
+    assert stats.label_counts == {
+        "misplay": 3, "good": 1, "key": 0, "luck": 0, "topdeck": 0, "note": 0,
+    }
     assert stats.misplays_by_result == {"win": (2, 1), "loss": (1, 1)}
     # 70s is in turn 2; 5s is before turn 1; the other game has no turns
     assert stats.misplays_by_turn == {2: 1}
