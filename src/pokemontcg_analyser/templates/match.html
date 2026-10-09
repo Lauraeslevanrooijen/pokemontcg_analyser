@@ -260,6 +260,16 @@
             <span><i style="background: var(--series-opponent);"></i>Opponent</span>
           </div>
           <div class="race" id="prize-race"></div>
+          {% if swing %}
+            <p style="margin: 8px 0;">
+              <span class="chip label-key">{{ swing[0] }}</span>
+              {% if swing[0] == 'comeback' %}
+                You won this after being {{ swing[1] }} Prize cards behind.
+              {% else %}
+                You lost this after being {{ swing[1] }} Prize cards ahead.
+              {% endif %}
+            </p>
+          {% endif %}
           {% if facts %}
             <p class="muted" style="font-size: 0.9em; margin: 8px 0;">
               {% if facts.first_prize %}

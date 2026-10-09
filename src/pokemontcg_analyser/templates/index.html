@@ -108,6 +108,12 @@
           <li>{{ m.lesson }} <a class="muted" href="/matches/{{ m.id }}">{{ m.deck }} vs {{ m.opponent_deck or '?' }}</a></li>
         {% endfor %}
       </ul>
+      {% if older_lesson %}
+        <p style="margin: 10px 0 0;">
+          <span class="muted">From further back:</span> {{ older_lesson.lesson }}
+          <a class="muted" href="/matches/{{ older_lesson.id }}">{{ older_lesson.deck }} vs {{ older_lesson.opponent_deck or '?' }}, {{ older_lesson.played_at_utc[:10] }}</a>
+        </p>
+      {% endif %}
     </div>
   {% endif %}
 
@@ -156,6 +162,19 @@
 
   <h1>Matches</h1>
 
+  {% if form %}
+    <p style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin: 0 0 12px;">
+      <span class="muted">Last {{ form|length }}:</span>
+      {# newest on the right, like a results row #}
+      {% for result in form|reverse %}<span class="form-dot badge-{{ result }}" title="{{ result }}">{{ result[0]|upper }}</span>{% endfor %}
+      {% if streak >= 2 %}<span class="muted">&middot; {{ streak }} wins in a row</span>{% endif %}
+      {% if session %}
+        <span class="muted">&middot; this session: {{ session.record.wins }}&ndash;{{ session.record.losses }}&ndash;{{ session.record.ties }}
+          over {{ session.games }} {{ 'game' if session.games == 1 else 'games' }}</span>
+      {% endif %}
+    </p>
+  {% endif %}
+
   {% if total_matches %}
     <form class="inline" method="get" action="/" style="grid-template-columns: 2fr 1fr 1fr auto auto;">
       <input name="q" value="{{ filters.q }}" placeholder="Search decks, notes and lessons">
@@ -183,7 +202,10 @@
             <td style="white-space: nowrap;">{{ m.played_at_utc[:16].replace('T', ' ') }}</td>
             <td>{{ m.deck }}</td>
             <td>{{ m.opponent_deck or '—' }}</td>
-            <td><span class="badge badge-{{ m.result }}">{{ m.result }}</span></td>
+            <td style="white-space: nowrap;">
+              <span class="badge badge-{{ m.result }}">{{ m.result }}</span>
+              {% if m.id in swings %}<span class="chip label-key" title="by {{ swings[m.id][1] }} Prize cards">{{ swings[m.id][0] }}</span>{% endif %}
+            </td>
             <td class="muted">{{ m.lesson or '' }}</td>
             <td class="num" style="white-space: nowrap;">{{ video_sizes.get(m.id, 'missing') if m.video_file else '—' }}</td>
           </tr>

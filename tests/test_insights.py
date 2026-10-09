@@ -123,3 +123,51 @@ def test_game_lengths_overall_by_result_and_by_deck(tmp_path: Path) -> None:
     assert found["Losses"].average == 10.5
     assert found["With Pult"].average == 11.5
     assert insights.game_lengths([]) == {}
+
+
+def _match(result: str, played: str = "2026-01-01T12:00:00+00:00", match_id: int = 1) -> storage.Match:
+    return storage.Match(match_id, played, "Pult", None, result, None, None)
+
+
+def test_prize_swing_spots_comebacks_and_lost_leads() -> None:
+    behind_then_won = [{"you": 0, "opponent": 3}, {"you": 6, "opponent": 3}]
+    ahead_then_lost = [{"you": 2, "opponent": 0}, {"you": 2, "opponent": 6}]
+
+    assert insights.prize_swing(_match("win"), behind_then_won) == ("comeback", 3)
+    assert insights.prize_swing(_match("loss"), ahead_then_lost) == ("lead lost", 2)
+    # one Prize card either way is just a game
+    assert insights.prize_swing(_match("win"), [{"you": 0, "opponent": 1}, {"you": 6, "opponent": 1}]) is None
+    # being behind only makes a comeback if the game was then won
+    assert insights.prize_swing(_match("loss"), [{"you": 0, "opponent": 3}, {"you": 1, "opponent": 6}]) is None
+    assert insights.prize_swing(_match("win"), []) is None
+
+
+def test_longest_streak_and_the_one_still_going() -> None:
+    results = ["win", "win", "win", "loss", "win", "win"]
+    matches = [_match(r, f"2026-01-0{i + 1}T12:00:00+00:00", i) for i, r in enumerate(results)]
+
+    assert insights.longest_streak(matches) == (3, 2)
+    assert insights.longest_streak(matches[:4]) == (3, 0)
+    assert insights.longest_streak([]) == (0, 0)
+
+
+def test_sessions_group_matches_logged_close_together() -> None:
+    times = ["2026-01-01T19:00", "2026-01-01T19:25", "2026-01-01T20:10", "2026-01-01T22:30", "2026-01-02T19:00"]
+    matches = [_match("win", f"{t}:00+00:00", i) for i, t in enumerate(times)]
+
+    grouped = insights.sessions(list(reversed(matches)))
+
+    # newest sitting first; 20:10 is within the hour of 19:25, 22:30 is not
+    assert [[m.id for m in sitting] for sitting in grouped] == [[4], [3], [0, 1, 2]]
+
+
+def test_recurring_words_across_notes() -> None:
+    notes = [
+        "Had moeten retreaten met Budew",
+        "Vergeten te retreaten, Dragapult stond klaar",
+        "Te veel op de bank gezet",
+        "Bank vol voordat ik Dragapult had",
+    ]
+
+    assert insights.recurring_words(notes) == [("bank", 2), ("dragapult", 2), ("retreaten", 2)]
+    assert insights.recurring_words(["only once here"]) == []

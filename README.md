@@ -69,6 +69,13 @@ Early scaffold. Working today:
 - Opponents page: per deck played against, your record, your note, and
   what they played. Weeks page: each week's record, lessons and misplays.
 - A match can be downloaded as a text file with its log, notes and lesson.
+- Records on the Stats page (fastest win, biggest comeback, longest
+  streak, most played card); games won from two or more Prize cards behind
+  or lost from as far ahead are marked. The start page shows your last ten
+  results, the current session and a lesson from further back; the Weeks
+  page groups matches into sessions; the Opponents page starts with the
+  decks met in the last four weeks; the Moments page lists words that keep
+  coming back in your misplays.
 - Decks page: save a decklist per deck with versions; matches count towards
   the version that was current when they were logged, so a change to the
   list shows up as a change in results.

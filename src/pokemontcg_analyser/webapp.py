@@ -218,6 +218,88 @@ def run_backup() -> Path | None:
     return today
 
 
+def _older_lesson(matches: list[storage.Match]) -> storage.Match | None:
+    """One lesson from further back than the latest three, a different one
+    each day, so old lessons come round again instead of scrolling away."""
+    older = [m for m in matches if m.lesson][3:]
+    if not older:
+        return None
+    return older[datetime.now().toordinal() % len(older)]
+
+
+def _current_session(matches: list[storage.Match]) -> dict | None:
+    """The sitting that is going on: the latest run of matches, if its last
+    one was logged within the hour."""
+    grouped = insights.sessions(matches)
+    if not grouped:
+        return None
+    latest = grouped[0]
+    last_played = datetime.fromisoformat(latest[-1].played_at_utc)
+    if datetime.now(timezone.utc) - last_played > timedelta(minutes=60):
+        return None
+    record = insights.Record()
+    for match in latest:
+        record.add(match.result)
+    return {"record": record, "games": len(latest)}
+
+
+def _swings(matches: list[storage.Match]) -> dict[int, tuple[str, int]]:
+    """Per match with a battle log: whether it was a comeback or a lost lead."""
+    found = {}
+    for match in matches:
+        if not match.battle_log:
+            continue
+        swing = insights.prize_swing(match, battlelog.parse(match.battle_log).prize_race())
+        if swing:
+            found[match.id] = swing
+    return found
+
+
+def _records(matches: list[storage.Match], lengths: list[tuple[storage.Match, int]]) -> list[dict]:
+    """Personal bests, each with the match it was set in (when it is one)."""
+    records: list[dict] = []
+    wins = [(m, turns) for m, turns in lengths if m.result == "win"]
+    if wins:
+        match, turns = min(wins, key=lambda item: item[1])
+        records.append({"name": "Fastest win", "value": f"{turns} turns", "match": match})
+    if lengths:
+        match, turns = max(lengths, key=lambda item: item[1])
+        records.append({"name": "Longest game", "value": f"{turns} turns", "match": match})
+    swings = _swings(matches)
+    by_id = {m.id: m for m in matches}
+    comebacks = [(by_id[i], size) for i, (kind, size) in swings.items() if kind == "comeback"]
+    if comebacks:
+        match, size = max(comebacks, key=lambda item: item[1])
+        records.append({"name": "Biggest comeback", "value": f"won from {size} Prize cards behind", "match": match})
+    longest, current = insights.longest_streak(matches)
+    if longest:
+        records.append(
+            {
+                "name": "Longest winning streak",
+                "value": f"{longest} {'game' if longest == 1 else 'games'}"
+                + (" (still going)" if current == longest else ""),
+                "match": None,
+            }
+        )
+    played: dict[str, int] = {}
+    for match in matches:
+        if match.battle_log:
+            log = battlelog.parse(match.battle_log)
+            for card, times in log.cards_played(log.me).items():
+                played[card] = played.get(card, 0) + times
+    if played:
+        card = max(played, key=lambda name: (played[name], name))
+        records.append({"name": "Most played card", "value": f"{card}, {played[card]} times", "match": None})
+    by_day: dict[str, int] = {}
+    for match in matches:
+        day = datetime.fromisoformat(match.played_at_utc).astimezone().strftime("%Y-%m-%d")
+        by_day[day] = by_day.get(day, 0) + 1
+    if by_day:
+        day = max(by_day, key=lambda d: (by_day[d], d))
+        records.append({"name": "Most games in a day", "value": f"{by_day[day]} on {day}", "match": None})
+    return records
+
+
 def format_size(size: int) -> str:
     if size >= 1024**3:
         return f"{size / 1024**3:.1f} GB"
@@ -285,6 +367,11 @@ def index(
             "filters": {"q": q, "result": result, "deck": deck},
             "my_decks": sorted({m.deck for m in matches}),
             "lessons": [m for m in matches if m.lesson][:3],
+            "older_lesson": _older_lesson(matches),
+            "form": [m.result for m in matches[:10]],
+            "streak": insights.longest_streak(matches)[1],
+            "session": _current_session(matches),
+            "swings": _swings(matches),
             "video_sizes": {
                 m.id: format_size(sizes[Path(m.video_file).name])
                 for m in matches
@@ -341,6 +428,11 @@ def stats(request: Request):
             "tempo": insights.tempo(matches, events),
             "lengths": insights.game_lengths(lengths),
             "logs": insights.summarise_logs(_deck_log_facts(matches)),
+            "records": _records(matches, lengths),
+            "swing_counts": {
+                kind: sum(1 for k, _ in _swings(matches).values() if k == kind)
+                for kind in ("comeback", "lead lost")
+            },
         },
     )
 
@@ -487,7 +579,18 @@ def opponents(request: Request):
         entry["cards"] = sorted(entry["cards"].items(), key=lambda item: (-item[1], item[0]))
         views.append(entry)
     views.sort(key=lambda e: (-e["record"].total, e["name"].lower()))
-    return templates.TemplateResponse(request, "opponents.html", {"opponents": views})
+    # What has been going around lately: the decks met in the last four weeks.
+    since = (datetime.now(timezone.utc) - timedelta(weeks=4)).isoformat()
+    recent: dict[str, insights.Record] = {}
+    for match in matches:
+        if match.opponent_deck and match.played_at_utc >= since:
+            recent.setdefault(match.opponent_deck, insights.Record()).add(match.result)
+    meta = sorted(recent.items(), key=lambda item: (-item[1].total, item[0].lower()))
+    return templates.TemplateResponse(
+        request,
+        "opponents.html",
+        {"opponents": views, "meta": meta, "meta_games": sum(r.total for _, r in meta)},
+    )
 
 
 @app.get("/weeks")
@@ -523,6 +626,17 @@ def weeks(request: Request):
                 entry["labels"][event.label] += 1
             if event.label == "misplay":
                 entry["misplays"].append((match, event))
+    # the sittings of each week: runs of matches logged within an hour of each other
+    for sitting in insights.sessions(matches):
+        first = datetime.fromisoformat(sitting[0].played_at_utc).astimezone()
+        last = datetime.fromisoformat(sitting[-1].played_at_utc).astimezone()
+        year, week, _ = first.isocalendar()
+        record = insights.Record()
+        for match in sitting:
+            record.add(match.result)
+        grouped[(year, week)].setdefault("sessions", []).append(
+            {"day": first, "until": last, "record": record, "matches": sitting}
+        )
     return templates.TemplateResponse(
         request, "weeks.html", {"weeks": list(grouped.values()), "labels": storage.LABELS}
     )
@@ -623,6 +737,12 @@ def moments(request: Request, label: str = "misplay"):
             "moments": insights.moments(matches, events, None if label == "all" else label),
             "labels": storage.LABELS,
             "selected": label,
+            # which words keep turning up in what was written down as a misplay
+            "recurring": insights.recurring_words(
+                [m.event.detail for m in insights.moments(matches, events, "misplay") if m.event.detail]
+            )
+            if label == "misplay"
+            else [],
         },
     )
 
@@ -788,6 +908,7 @@ def match_detail(request: Request, match_id: int):
             ),
             "not_in_list": _played_but_not_listed(match),
             "facts": _log_facts(match),
+            "swing": _swings([match]).get(match.id),
             "wrap_up": request.query_params.get("wrapup") == "1",
         },
     )

@@ -20,6 +20,19 @@
           {% if w.labels[key] %}<span class="chip label-{{ key }}">{{ w.labels[key] }} {{ name }}</span>{% endif %}
         {% endfor %}
       </p>
+      {% if w.sessions %}
+        <strong>Sessions</strong>
+        <ul style="margin: 4px 0 10px; padding-left: 20px;">
+          {% for s in w.sessions|reverse %}
+            <li>
+              {{ s.day.strftime('%a %-d %b, %H:%M') }}{% if s.matches|length > 1 %}&ndash;{{ s.until.strftime('%H:%M') }}{% endif %}:
+              <strong>{{ s.record.wins }}&ndash;{{ s.record.losses }}&ndash;{{ s.record.ties }}</strong>
+              <span class="muted">over {{ s.matches|length }} {{ 'game' if s.matches|length == 1 else 'games' }}
+                ({% for m in s.matches %}<a class="muted" href="/matches/{{ m.id }}">{{ m.opponent_deck or '?' }}</a>{{ ', ' if not loop.last else '' }}{% endfor %})</span>
+            </li>
+          {% endfor %}
+        </ul>
+      {% endif %}
       {% if w.lessons %}
         <strong>Lessons</strong>
         <ul style="margin: 4px 0 10px; padding-left: 20px;">

@@ -11,6 +11,15 @@
        style="padding: 6px 12px; font-size: 0.9em; {{ 'border-color: var(--c);' if selected == 'all' else '' }}">All</a>
   </p>
 
+  {% if recurring %}
+    <p>
+      <span class="muted">Words that keep coming back in your misplays:</span>
+      {% for word, count in recurring[:12] %}
+        <span class="chip" title="in {{ count }} notes">{{ word }} &times;{{ count }}</span>
+      {% endfor %}
+    </p>
+  {% endif %}
+
   {% if moments %}
     <table>
       <thead>

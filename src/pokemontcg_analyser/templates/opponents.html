@@ -2,6 +2,25 @@
 {% block title %}Opponents — Pokémon TCG Live analyser{% endblock %}
 {% block content %}
   <h1>Opponents</h1>
+  {% if meta %}
+    <h2>What you have been running into</h2>
+    <p class="muted">The decks you met in the last four weeks, most often first.</p>
+    <table>
+      <thead><tr><th>Deck</th><th class="num">Met</th><th class="num">Share</th><th class="num">W&ndash;L&ndash;T</th><th></th></tr></thead>
+      <tbody>
+        {% for name, r in meta %}
+          <tr>
+            <td>{{ name }}</td>
+            <td class="num">{{ r.total }}</td>
+            <td class="num">{{ '%.0f%%' % (r.total / meta_games * 100) }}</td>
+            <td class="num">{{ r.wins }}&ndash;{{ r.losses }}&ndash;{{ r.ties }}</td>
+            <td style="width: 30%;"><span class="bar" style="width: {{ '%.0f' % (r.total / meta[0][1].total * 100) }}%; background: var(--muted);"></span></td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    <h2>Per deck</h2>
+  {% endif %}
   {% if not opponents %}
     <p class="muted">No matches against a named deck yet.</p>
   {% endif %}

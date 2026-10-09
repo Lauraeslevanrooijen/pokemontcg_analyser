@@ -23,6 +23,28 @@
       &middot; {{ '%.0f%%' % (stats.overall.win_rate * 100) }} win rate
     </p>
 
+    {% if records %}
+      <h2>Records</h2>
+      <table>
+        <tbody>
+          {% for r in records %}
+            <tr {% if r.match %}class="clickable" onclick="window.location='/matches/{{ r.match.id }}'"{% endif %}>
+              <td style="width: 30%;">{{ r.name }}</td>
+              <td><strong>{{ r.value }}</strong></td>
+              <td class="muted">{% if r.match %}{{ r.match.deck }} vs {{ r.match.opponent_deck or '?' }}, {{ r.match.played_at_utc[:10] }}{% endif %}</td>
+            </tr>
+          {% endfor %}
+          {% if swing_counts.comeback or swing_counts['lead lost'] %}
+            <tr>
+              <td>Games that turned around</td>
+              <td><strong>{{ swing_counts.comeback }} {{ 'comeback' if swing_counts.comeback == 1 else 'comebacks' }}, {{ swing_counts['lead lost'] }} lost from ahead</strong></td>
+              <td class="muted">a swing of two Prize cards or more</td>
+            </tr>
+          {% endif %}
+        </tbody>
+      </table>
+    {% endif %}
+
     <h2>By deck</h2>
     <table>
       {{ record_head('Deck') }}

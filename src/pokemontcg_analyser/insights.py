@@ -3,7 +3,9 @@ and where the labelled moments (misplays, ...) fall."""
 
 from __future__ import annotations
 
+import re
 from collections import defaultdict
+from datetime import datetime, timedelta
 from dataclasses import dataclass, field
 
 from .storage import LABELS, Event, Match
@@ -295,3 +297,68 @@ def summarise_logs(facts: list[LogFacts]) -> LogSummary:
             len(turns_list) - len(came),
         )
     return summary
+
+
+# A swing of this many Prize cards makes a game a comeback (or a lost lead).
+SWING = 2
+
+
+def prize_swing(match: Match, race: list[dict]) -> tuple[str, int] | None:
+    """Whether a game turned around, from its Prize cards per turn:
+    ("comeback", 3) for a win after being three behind, ("lead lost", 2)
+    for a loss after being two ahead."""
+    if not race:
+        return None
+    behind = max(point["opponent"] - point["you"] for point in race)
+    ahead = max(point["you"] - point["opponent"] for point in race)
+    if match.result == "win" and behind >= SWING:
+        return "comeback", behind
+    if match.result == "loss" and ahead >= SWING:
+        return "lead lost", ahead
+    return None
+
+
+def longest_streak(matches: list[Match], result: str = "win") -> tuple[int, int]:
+    """The longest run of one result and the run still going, by order of
+    play: (longest, current)."""
+    longest = run = 0
+    for match in sorted(matches, key=lambda m: m.played_at_utc):
+        run = run + 1 if match.result == result else 0
+        longest = max(longest, run)
+    return longest, run
+
+
+def sessions(matches: list[Match], gap_minutes: int = 60) -> list[list[Match]]:
+    """Matches grouped into sittings: logged within `gap_minutes` of the
+    one before. Newest sitting first, each in the order it was played."""
+    grouped: list[list[Match]] = []
+    previous: datetime | None = None
+    for match in sorted(matches, key=lambda m: m.played_at_utc):
+        played = datetime.fromisoformat(match.played_at_utc)
+        if previous is None or played - previous > timedelta(minutes=gap_minutes):
+            grouped.append([])
+        grouped[-1].append(match)
+        previous = played
+    return grouped[::-1]
+
+
+# Words that say nothing about what went wrong, in Dutch and English.
+_FILLER = set(
+    """de het een en van in op te dat die dit is was niet ik je mijn mij me had heb moest moeten
+    maar ook nog als dan er hier daar om met voor naar bij uit aan zo wel geen zijn mijn eerst
+    the a an and of to in on at it is was not i my me had have should would could but also if
+    then there here for with from this that did do does didn don t be been so too very more just
+    you your should've maybe""".split()
+)
+
+
+def recurring_words(texts: list[str], minimum: int = 2) -> list[tuple[str, int]]:
+    """Words that come back across notes: (word, number of notes it is in),
+    most frequent first. A crude but honest way to see a mistake repeat."""
+    counts: dict[str, int] = defaultdict(int)
+    for text in texts:
+        for word in set(re.findall(r"[a-zà-ÿ']{3,}", text.lower())):
+            if word not in _FILLER:
+                counts[word] += 1
+    found = [(word, count) for word, count in counts.items() if count >= minimum]
+    return sorted(found, key=lambda item: (-item[1], item[0]))

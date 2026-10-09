@@ -987,3 +987,76 @@ def test_lucky_topdeck_and_note_labels(client: TestClient) -> None:
     assert 'data-label="topdeck"' in page and "Lucky topdeck" in page
     assert 'data-label="note"' in page
     assert "Lucky topdeck" in client.get("/moments?label=topdeck").text
+
+
+COMEBACK = """Setup
+Ash drew 7 cards for the opening hand.
+- 7 drawn cards.
+   • Pikachu, Iono
+
+Gary's Turn
+Gary took 2 Prize cards.
+
+Ash's Turn
+Ash played Iono.
+Ash took 2 Prize cards.
+
+Gary's Turn
+Gary drew a card.
+
+Ash's Turn
+Ash took 2 Prize cards.
+Ash took 2 Prize cards.
+Gary conceded. Ash wins.
+"""
+
+
+def test_comeback_shows_on_the_list_the_match_and_the_records(client: TestClient) -> None:
+    client.post("/matches", data={"deck": "Pult", "result": "win", "battle_log": COMEBACK})
+    match_id = storage.list_matches()[0].id
+
+    assert "comeback" in client.get("/").text
+    assert "You won this after being 2 Prize cards behind" in client.get(f"/matches/{match_id}").text
+    stats = client.get("/stats").text
+    records = stats[stats.index("<h2>Records</h2>") : stats.index("<h2>By deck</h2>")]
+    assert "Biggest comeback" in records and "won from 2 Prize cards behind" in records
+    assert "Fastest win" in records and "4 turns" in records
+    assert "1 comeback, 0 lost from ahead" in records
+    assert "Most played card" in records and "Iono" in records
+
+
+def test_start_page_shows_form_session_and_an_older_lesson(client: TestClient) -> None:
+    for index in range(5):
+        match_id = storage.log_match(deck="Pult", result="win" if index else "loss")
+        storage.set_lesson(match_id, f"lesson {index}")
+
+    page = client.get("/").text
+
+    assert "Last 5:" in page
+    assert "4 wins in a row" in page
+    assert "this session: 4&ndash;1&ndash;0" in page  # all logged just now
+    # the three newest, and one of the two older ones brought back
+    for index in (2, 3, 4):
+        assert f"lesson {index}" in page
+    older = page[page.index("From further back:") :]
+    assert "lesson 0" in older or "lesson 1" in older
+
+
+def test_misplay_words_and_recent_opponents(client: TestClient) -> None:
+    match_id = storage.log_match(deck="Pult", opponent_deck="Tauros", result="loss")
+    storage.log_match(deck="Pult", opponent_deck="Tauros", result="win")
+    storage.log_match(deck="Pult", opponent_deck="Alakazam", result="loss")
+    storage.add_note(match_id, "too slow with the retreat", offset_seconds=5.0, label="misplay")
+    storage.add_note(match_id, "retreat came a turn late", offset_seconds=9.0, label="misplay")
+
+    moments = client.get("/moments").text
+    assert "Words that keep coming back" in moments and "retreat &times;2" in moments
+    assert "Words that keep coming back" not in client.get("/moments?label=good").text
+
+    opponents = client.get("/opponents").text
+    meta = opponents[opponents.index("What you have been running into") : opponents.index("<h2>Per deck</h2>")]
+    assert meta.index("Tauros") < meta.index("Alakazam")  # met most, listed first
+    assert "67%" in meta
+
+    weeks = client.get("/weeks").text
+    assert "Sessions" in weeks and "over 3 games" in weeks
