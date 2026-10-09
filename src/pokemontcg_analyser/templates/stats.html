@@ -184,7 +184,10 @@
       <p class="muted">Nothing here until a match has a battle log. Paste one when you log a match.</p>
     {% else %}
       <p class="muted">
-        Based on the {{ openings.games }} {{ 'game' if openings.games == 1 else 'games' }} with a battle log.
+        Based on the {{ openings.games }} {{ 'game' if openings.games == 1 else 'games' }} with a battle log
+        that lists your opening hand{% if mulligans.total %}; in {{ mulligans.total }} more you took a mulligan
+        ({{ mulligans.wins }}&ndash;{{ mulligans.losses }}&ndash;{{ mulligans.ties }}), and the log does not show the
+        hand you kept{% endif %}.
         {% if openings.games < 10 %}With this few games the win rates say little yet.{% endif %}
       </p>
       {% if openings.typed_games %}

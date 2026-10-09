@@ -102,6 +102,8 @@
     :root { --series-you: #3987e5; --series-opponent: #d95926; }
     .hand { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 8px; margin: 8px 0 16px; max-width: 760px; }
     .hand-card { position: relative; aspect-ratio: 245 / 337; border-radius: 5px; overflow: hidden; background: var(--bg); border: 1px solid var(--border); }
+    #mulligan-note .detail { display: block; margin-top: 4px; }
+    .hand-card.extra { outline: 2px dashed var(--accent); outline-offset: 1px; }
     .hand-card img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
     .hand-card span { position: absolute; inset: 0; padding: 6px; font-size: 0.75em; overflow-wrap: anywhere; }
     .race { position: relative; margin-top: 4px; }
@@ -251,7 +253,9 @@
       <div class="panel" id="log-summary" style="margin-top: 16px;" hidden>
         <div id="opening-hand-block">
           <strong>Opening hand</strong>
+          <p class="muted" id="mulligan-note" style="font-size: 0.9em; margin: 8px 0 16px;" hidden></p>
           <div class="hand" id="opening-hand"></div>
+          <p class="muted" id="opening-extra-note" style="font-size: 0.9em; margin: -8px 0 16px;" hidden></p>
         </div>
         <div id="prize-race-block">
           <strong>Prize cards taken</strong>
@@ -970,15 +974,31 @@
     function renderLogSummary() {
       const panel = document.getElementById('log-summary');
       const hand = battleLog ? battleLog.opening_hand : [];
+      const extra = battleLog ? battleLog.opening_extra : [];
+      const mulligans = battleLog ? battleLog.mulligans : [];
       const race = battleLog ? battleLog.prize_race : [];
-      panel.hidden = !hand.length && !race.length;
-      document.getElementById('opening-hand-block').hidden = !hand.length;
+      panel.hidden = !hand.length && !race.length && !mulligans.length;
+      // seven across, wrapping when mulligan cards make it more
+      document.getElementById('opening-hand-block').hidden = !hand.length && !mulligans.length;
+      const mulliganNote = document.getElementById('mulligan-note');
+      mulliganNote.hidden = !mulligans.length;
+      mulliganNote.replaceChildren();
+      if (mulligans.length) {
+        mulliganNote.appendChild(el('span', '', `You took ${mulligans.length === 1 ? 'a mulligan' : mulligans.length + ' mulligans'}. `
+          + 'The battle log does not list the hand you kept, only what you threw back:'));
+        for (const thrown of mulligans) mulliganNote.appendChild(el('span', 'detail', thrown.join(', ')));
+      }
       document.getElementById('prize-race-block').hidden = !race.length;
 
       const handBox = document.getElementById('opening-hand');
       handBox.replaceChildren();
-      for (const card of hand) {
-        const tile = el('div', 'hand-card');
+      const extraNote = document.getElementById('opening-extra-note');
+      extraNote.hidden = !extra.length;
+      extraNote.textContent = extra.length
+        ? `The last ${extra.length === 1 ? 'card was' : extra.length + ' cards were'} drawn extra because your opponent took a mulligan.`
+        : '';
+      for (const [index, card] of [...hand, ...extra].entries()) {
+        const tile = el('div', 'hand-card' + (index >= hand.length ? ' extra' : ''));
         tile.title = card.name;
         tile.appendChild(el('span', 'muted', card.name));
         if (card.image) {

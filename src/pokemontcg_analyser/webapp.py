@@ -413,6 +413,7 @@ def stats(request: Request):
     matches = storage.list_matches(db_path=db_path())
     events = storage.list_all_events(db_path=db_path())
     hands = []
+    mulligans = insights.Record()  # games in which I took a mulligan
     lengths = []
     markers: dict[int, int] = {}
     for event in events:
@@ -427,7 +428,11 @@ def stats(request: Request):
             lengths.append((match, turn_count))
         if log is None:
             continue
-        hand = log.opening_hand()
+        # what I started the game holding: the seven, plus any cards
+        # drawn for the opponent's mulligans
+        if log.my_mulligans():
+            mulligans.add(match.result)
+        hand = log.opening_hand() + log.mulligan_draws()
         if hand:
             hands.append((match.result, hand, _card_kinds(_deck_cards(match))))
     return templates.TemplateResponse(
@@ -437,6 +442,7 @@ def stats(request: Request):
             "stats": insights.build(matches, events),
             "labels": storage.LABELS,
             "openings": insights.openings(hands),
+            "mulligans": mulligans,
             "tempo": insights.tempo(matches, events),
             "lengths": insights.game_lengths(lengths),
             "logs": insights.summarise_logs(_deck_log_facts(matches)),
@@ -1061,6 +1067,20 @@ def _battle_log_json(text: str | None, match: storage.Match | None = None) -> di
                 ),
             }
             for name in log.opening_hand()
+        ],
+        # hands I threw back; after one, the hand I kept is not in the log
+        "mulligans": log.my_mulligans(),
+        # drawn on top of those for the opponent's mulligans
+        "opening_extra": [
+            {
+                "name": name,
+                "image": (
+                    f"/cards/image/{listed[name].set_code}/{listed[name].number}"
+                    if name in listed and listed[name].printing
+                    else None
+                ),
+            }
+            for name in log.mulligan_draws()
         ],
     }
 

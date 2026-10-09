@@ -23,9 +23,13 @@ _ATTACK = re.compile(r"^(.+?)'s (.+?) used .+? on .+? for \d+ damage")
 _EVOLVED = re.compile(r"^(.+?) evolved (.+?) to (.+?) (?:on the Bench|in the Active Spot)")
 _PLAYED = re.compile(r"^(.+?) played (.+?)(?: to the (?:Active Spot|Bench|Stadium spot))?\.$")
 _ATTACHED = re.compile(r"^(.+?) attached (.+?) to ")
+# "X drew Iono." names a card; "X drew a card", "X drew 2 cards" and "X drew
+# 3 more cards because Y took at least 1 mulligan" do not.
 _DREW_ONE = re.compile(
-    r"^(.+?) drew (?!a card\b|\d+ cards?\b)(.+?)( and played it to the Bench)?\.$"
+    r"^(.+?) drew (?!a card\b|\d+ (?:more )?cards?\b)(.+?)( and played it to the Bench)?\.$"
 )
+_TOOK_MULLIGAN = re.compile(r"^(.+?) took (?:a mulligan|\d+ mulligans)\.$")
+_MULLIGAN_DRAW = re.compile(r"^(.+?) drew \d+ more cards? because .+ took at least \d+ mulligans?\.$")
 _LISTED = re.compile(r"^(.+?) (?:drew|discarded) \d+ cards?(?: and played them to the Bench)?: (.+)$")
 _POKEMON = [
     re.compile(r"played (.+?) to the (?:Active Spot|Bench)"),
@@ -86,9 +90,25 @@ class BattleLog:
                     found.append(hit.group(1))
         return found
 
+    def my_mulligans(self) -> list[list[str]]:
+        """The hands I had to throw back for having no Basic Pokémon, in
+        order. The log reveals these, as the game does to the opponent."""
+        hands: list[list[str]] = []
+        for action in self.setup:
+            took = _TOOK_MULLIGAN.match(action.text)
+            if not took or took.group(1) != self.me:
+                continue
+            for detail in action.details:
+                if detail.startswith("Cards revealed from Mulligan") and ": " in detail:
+                    hands.append([card.strip() for card in detail.split(": ", 1)[1].split(",")])
+        return hands
+
     def opening_hand(self) -> list[str]:
-        """The cards I started with. After a mulligan the log has several
-        opening hands; the last one is the hand that was kept."""
+        """The seven cards I started with. Empty when I took a mulligan:
+        the log then lists the hand that was thrown back (the same cards
+        as the first mulligan), and never the hand I kept."""
+        if self.my_mulligans():
+            return []
         hand: list[str] = []
         for action in self.setup:
             drew = _OPENING_HAND.match(action.text)
@@ -97,6 +117,23 @@ class BattleLog:
                     if ": " in detail:
                         hand = [card.strip() for card in detail.split(": ", 1)[1].split(",")]
         return hand
+
+    def mulligan_draws(self) -> list[str]:
+        """The extra cards I drew before the game because the opponent took
+        mulligans: part of the hand I started with, on top of the seven."""
+        extra: list[str] = []
+        for action in self.setup:
+            drew = _MULLIGAN_DRAW.match(action.text)
+            if not drew or drew.group(1) != self.me:
+                continue
+            for detail in action.details:
+                listed = _LISTED.match(detail)
+                one = _DREW_ONE.match(detail)
+                if listed:
+                    extra += [card.strip() for card in listed.group(2).split(",")]
+                elif one:
+                    extra.append(one.group(2))
+        return extra
 
     def prize_race(self) -> list[dict]:
         """Per turn, how many Prize cards each side has taken so far."""
@@ -168,6 +205,8 @@ class BattleLog:
         seen = set(self.cards_played(player))
         if player == self.me:
             seen.update(self.opening_hand())
+            for hand in self.my_mulligans():
+                seen.update(hand)
         for action in self._actions():
             for line in [action.text, *action.details]:
                 one = _DREW_ONE.match(line)

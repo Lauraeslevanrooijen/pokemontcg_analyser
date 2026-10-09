@@ -92,8 +92,20 @@ Gary took a Prize card.
 """
 
 
-def test_opening_hand_is_the_one_kept_after_a_mulligan() -> None:
-    assert battlelog.parse(LONGER).opening_hand() == ["Raichu", "Iono", "Basic Lightning Energy"]
+def test_opening_hand_is_unknown_after_my_own_mulligan() -> None:
+    # as the game writes it: the hand under "opening hand" is the one that
+    # was thrown back, and the hand kept afterwards is not listed anywhere
+    mine = MULLIGANS.replace(
+        "Gary took a mulligan.\n- Cards revealed from Mulligan 1\n   • Rare Candy, Hilda",
+        "Ash took a mulligan.\n- Cards revealed from Mulligan 1\n   • Iono, Switch, Nest Ball",
+    )
+    log = battlelog.parse(mine)
+
+    assert log.my_mulligans() == [["Iono", "Switch", "Nest Ball"]]
+    assert log.opening_hand() == []
+    assert {"Iono", "Switch", "Nest Ball"} <= log.cards_seen(log.me)
+
+    assert battlelog.parse(MULLIGANS).my_mulligans() == []  # the opponent's don't count
     assert battlelog.parse(LOG).opening_hand()[:2] == ["Buddy-Buddy Poffin", "Budew"]
 
 
@@ -185,3 +197,44 @@ def test_first_prize_setup_turn_and_turn_activity() -> None:
         {"turn": 1, "attached": True, "attacked": True},
         {"turn": 2, "attached": False, "attacked": False},
     ]
+
+
+MULLIGANS = """Setup
+Ash decided to go second.
+Ash drew 7 cards for the opening hand.
+- 7 drawn cards.
+   • Pikachu, Iono, Switch, Nest Ball, Raichu, Basic Lightning Energy, Basic Lightning Energy
+Gary drew 7 cards for the opening hand.
+- 7 drawn cards.
+Gary took a mulligan.
+- Cards revealed from Mulligan 1
+   • Rare Candy, Hilda
+Gary took 2 mulligans.
+- Cards revealed from Mulligan 2
+   • Ultra Ball
+Ash drew 3 more cards because Gary took at least 1 mulligan.
+- Ash drew 3 cards.
+   • Boss's Orders, Moltres, Crispin
+Ash played Pikachu to the Active Spot.
+
+Gary's Turn
+Gary drew a card.
+"""
+
+
+def test_cards_drawn_for_the_opponents_mulligans() -> None:
+    log = battlelog.parse(MULLIGANS)
+
+    assert len(log.opening_hand()) == 7
+    assert log.mulligan_draws() == ["Boss's Orders", "Moltres", "Crispin"]
+    seen = log.cards_seen(log.me)
+    assert {"Moltres", "Crispin", "Pikachu"} <= seen
+    # the sentence about the mulligan is not itself a card
+    assert not any("mulligan" in card for card in seen)
+
+    single = MULLIGANS.replace(
+        "Ash drew 3 more cards because Gary took at least 1 mulligan.\n- Ash drew 3 cards.\n   • Boss's Orders, Moltres, Crispin",
+        "Ash drew 1 more card because Gary took at least 1 mulligan.\n- Ash drew Moltres.",
+    )
+    assert battlelog.parse(single).mulligan_draws() == ["Moltres"]
+    assert battlelog.parse(LOG).mulligan_draws() == []
