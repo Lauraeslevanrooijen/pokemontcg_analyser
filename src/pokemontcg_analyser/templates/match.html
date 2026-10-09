@@ -120,8 +120,11 @@
     .tl-log summary { color: var(--muted); font-size: 0.9em; padding: 2px 0; }
     .tl-log ol { margin: 4px 0 0; padding-left: 20px; }
     .tl-log li { padding: 1px 0; }
+    .tl-turn.current { color: var(--text); border-bottom-color: var(--accent); }
+    .tl-turn.current::before { content: "\25B6"; color: var(--accent); font-size: 0.8em; }
+    .tl-log li.now { background: color-mix(in srgb, var(--accent) 16%, transparent); border-radius: 4px; }
     .tl-log li.strong { color: var(--text); font-weight: 600; }
-    .tl-log .detail { display: block; color: var(--muted); font-size: 0.92em; }
+    .tl-log .detail { display: block; color: var(--muted); font-size: 0.92em; font-weight: 400; }
     .log-comment-add {
       background: transparent; color: var(--muted); border: none; padding: 0 6px; font-weight: 400;
       font-size: 0.9em; opacity: 0;
@@ -526,6 +529,7 @@
           turn += 1;
           const header = el('div', 'tl-turn');
           header.dataset.offset = event.offset_seconds;
+          header.dataset.turn = turn;
           header.append(el('span', '', `Turn ${turn}`));
           if (turnOwner(turn, event)) header.append(el('span', 'who', turnOwner(turn, event)));
           header.append(el('span', '', formatTime(event.offset_seconds)));
@@ -586,6 +590,7 @@
     // line are notes stored against that turn and the line's position.
     function logBlock(title, actions, open, turn) {
       const block = el('details', 'tl-log');
+      block.dataset.turn = turn;
       const comments = events.filter((e) => e.log_turn === turn);
       block.open = open || comments.length > 0 || (commentingAt && commentingAt.turn === turn);
       const count = `${title} · ${actions.length} ${actions.length === 1 ? 'action' : 'actions'}`;
@@ -599,7 +604,11 @@
       actions.forEach((action, index) => {
         const item = el('li', /\bused\b|Knocked Out|Prize card|\bwins?\b|conceded/.test(action.text) ? 'strong' : '');
         const exact = logTimes[`${turn}-${index}`];
-        if (exact !== undefined) nearest = exact;
+        if (exact !== undefined) {
+          nearest = exact;
+          item.dataset.time = exact;
+          item.dataset.index = index;
+        }
         const text = el('span', '', action.text);
         if (player && exact !== undefined) {
           const at = el('span', 'at', formatTime(exact));
@@ -1059,6 +1068,7 @@
       renderTimeline();
       renderMarkers();
       renderTempo();
+      followLog();  // the marks are gone with the old list
     }
 
     // Highlight the note the video is currently at (the latest one already
@@ -1081,6 +1091,42 @@
           timelinePanel.scrollTop = top - timelinePanel.clientHeight / 3;
         }
       });
+    }
+
+    // Follow along in the log: the turn the video is in is marked, and in
+    // it the last play whose moment has passed. The panel scrolls to keep
+    // that in view, but only when it moves on, so scrolling around by hand
+    // isn't undone, and not while something is being written.
+    let followed = null;
+    function followLog() {
+      if (!player) return;
+      const now = player.currentTime + 0.25;
+      let turn = 0;
+      sortedEvents().filter((e) => e.kind === 'turn').forEach((mark, index) => {
+        if (mark.offset_seconds <= now) turn = index + 1;
+      });
+      timeline.querySelectorAll('.tl-turn.current').forEach((node) => node.classList.remove('current'));
+      timeline.querySelectorAll('.tl-log li.now').forEach((node) => node.classList.remove('now'));
+      if (!turn) {
+        followed = null;
+        return;
+      }
+      const header = timeline.querySelector(`.tl-turn[data-turn="${turn}"]`);
+      if (header) header.classList.add('current');
+      let line = null;
+      timeline.querySelectorAll(`.tl-log[data-turn="${turn}"] li[data-time]`).forEach((item) => {
+        if (parseFloat(item.dataset.time) <= now) line = item;
+      });
+      if (line) line.classList.add('now');
+      const key = `${turn}:${line ? line.dataset.index : ''}`;
+      if (key === followed) return;
+      followed = key;
+      const target = line || header;
+      if (!target || editingId !== null || commentingAt !== null) return;
+      if (timelinePanel.scrollHeight <= timelinePanel.clientHeight) return;
+      const top = target.getBoundingClientRect().top - timelinePanel.getBoundingClientRect().top + timelinePanel.scrollTop;
+      const visible = top >= timelinePanel.scrollTop && top + target.offsetHeight <= timelinePanel.scrollTop + timelinePanel.clientHeight;
+      if (!visible) timelinePanel.scrollTop = top - timelinePanel.clientHeight / 3;
     }
 
     function resumeIfPaused() {
@@ -1291,6 +1337,7 @@
       player.addEventListener('timeupdate', () => {
         if (!scrubbing) scrub.value = player.currentTime;
         updateActive();
+        followLog();
       });
       player.addEventListener('play', () => { resumeAfterNote = false; });
       scrub.addEventListener('input', () => {

@@ -1248,10 +1248,11 @@ def _store_detected_turns(match_id: int, replace: bool) -> list[turns.Turn]:
 
 def _store_log_times(match_id: int) -> None:
     """Find where the plays of the battle log happen in the recording.
-    Needs the log's turns to line up one to one with the turn markers. My
-    own cards are matched by the printing in the deck's saved list; the
-    opponent's are known by name only, so their newest few printings are
-    all tried."""
+    Needs the log's turns to line up one to one with the turn markers, and
+    the deck's saved list for the card pictures. Only my own plays are
+    looked for: the opponent's cards are known by name alone, and trying
+    several printings of each found a third of them while taking most of
+    the time (minutes per match)."""
     with _video_lock:
         match = storage.get_match(match_id, db_path=db_path())
         if match is None or not match.video_file or not match.battle_log:
@@ -1271,15 +1272,16 @@ def _store_log_times(match_id: int) -> None:
         plays: list[list[logtimes.Play]] = []
         for turn in log.turns:
             turn_plays = []
-            for action, card in log.plays(turn):
-                printing = listed.get(card) if turn.player == log.me else None
-                if printing is not None and printing.printing:
-                    picture = cards.image_path(printing.set_code, printing.number)
-                    pictures = (picture,) if picture is not None else ()
-                else:
-                    pictures = tuple(cards.images_by_name(card))
-                if pictures:
-                    turn_plays.append((action, pictures))
+            if turn.player == log.me:
+                for action, card in log.plays(turn):
+                    printing = listed.get(card)
+                    picture = (
+                        cards.image_path(printing.set_code, printing.number)
+                        if printing is not None and printing.printing
+                        else None
+                    )
+                    if picture is not None:
+                        turn_plays.append((action, picture))
             plays.append(turn_plays)
         found = logtimes.find_play_times(video_path, list(zip(marks, ends)), plays)
         storage.set_log_times(

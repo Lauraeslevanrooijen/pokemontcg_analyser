@@ -26,7 +26,6 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
     monkeypatch.setattr(logtimes, "find_play_times", lambda *args: {})
     # The card database is on the internet; tests that need a card say so.
     monkeypatch.setattr(cards, "lookup", lambda set_code, number: None)
-    monkeypatch.setattr(cards, "images_by_name", lambda name: [])
     monkeypatch.setattr(recorder, "video_duration", lambda path: 600.0)
     monkeypatch.setattr(recorder, "game_crop", lambda: None)
     # No test should load the real speech model.

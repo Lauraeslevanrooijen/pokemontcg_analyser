@@ -45,7 +45,8 @@ Early scaffold. Working today:
   log. The log has no timestamps; it lines up with the video through the
   turn markers, and your own card plays are then looked for in the video
   (the game shows a played card enlarged), so those lines jump to their
-  moment. Any line of the log can be commented on and labelled, like
+  moment, and while the video plays the timeline follows along: the
+  current turn and the last play that has happened are marked. Any line of the log can be commented on and labelled, like
   a note on the video. From the log the review page also shows the opening hand
   and a chart of Prize cards taken per turn, the opponent's deck gets a
   name when you gave none, and the Stats page compares opening hands across
