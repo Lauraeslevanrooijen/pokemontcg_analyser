@@ -314,10 +314,20 @@ def stats(request: Request):
     matches = storage.list_matches(db_path=db_path())
     events = storage.list_all_events(db_path=db_path())
     hands = []
+    lengths = []
+    markers: dict[int, int] = {}
+    for event in events:
+        if event.kind == "turn":
+            markers[event.match_id] = markers.get(event.match_id, 0) + 1
     for match in matches:
-        if not match.battle_log:
+        # The battle log knows exactly how many turns a game had; without
+        # one, the turn markers on the recording are the next best count.
+        log = battlelog.parse(match.battle_log) if match.battle_log else None
+        turn_count = len(log.turns) if log is not None and log.turns else markers.get(match.id, 0)
+        if turn_count:
+            lengths.append((match, turn_count))
+        if log is None:
             continue
-        log = battlelog.parse(match.battle_log)
         hand = log.opening_hand()
         if hand:
             hands.append((match.result, hand, _card_kinds(_deck_cards(match))))
@@ -329,6 +339,7 @@ def stats(request: Request):
             "labels": storage.LABELS,
             "openings": insights.openings(hands),
             "tempo": insights.tempo(matches, events),
+            "lengths": insights.game_lengths(lengths),
         },
     )
 

@@ -878,3 +878,17 @@ def test_trimming_moves_the_log_times_along(client: TestClient) -> None:
 
     assert json.loads(storage.get_match(match_id).log_times) == {"2-1": 35.0, "2-4": 0.0}
     assert client.get(f"/matches/{match_id}/timeline").json()["log_times"] == {"2-1": 35.0, "2-4": 0.0}
+
+
+def test_stats_show_game_length_from_logs_and_markers(client: TestClient) -> None:
+    text = (Path(__file__).parent / "data" / "battle_log.txt").read_text()
+    client.post("/matches", data={"deck": "Pult", "result": "win", "battle_log": text})  # 4 turns
+    marked = storage.log_match(deck="Pult", result="loss")
+    storage.replace_turns(marked, [(float(i * 60), "you") for i in range(10)])  # 10 markers
+    storage.log_match(deck="Slob", result="loss")  # length unknown: not counted
+
+    page = client.get("/stats").text
+    section = page[page.index("Game length") : page.index("Opening hands")]
+
+    assert "All games" in section and ">7.0<" in section  # (4 + 10) / 2
+    assert "With Pult" in section and "With Slob" not in section

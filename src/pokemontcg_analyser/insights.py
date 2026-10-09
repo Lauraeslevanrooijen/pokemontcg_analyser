@@ -213,3 +213,30 @@ def tempo(matches: list[Match], events: list[Event]) -> dict[str, tuple[float, i
         for owner, values in totals.items()
         if values
     }
+
+
+@dataclass
+class Lengths:
+    """How many turns a group of games took."""
+
+    games: int
+    average: float
+    shortest: int
+    longest: int
+
+
+def game_lengths(games: list[tuple[Match, int]]) -> dict[str, Lengths]:
+    """Turns per game, for all games and split by result and by deck.
+    `games` pairs each match with its number of turns (both players' turns
+    counted); matches whose length isn't known are simply not in it."""
+    groups: dict[str, list[int]] = defaultdict(list)
+    for match, turns in games:
+        groups["All games"].append(turns)
+        groups[{"win": "Wins", "loss": "Losses", "tie": "Ties"}[match.result]].append(turns)
+        groups[f"With {match.deck}"].append(turns)
+    order = ["All games", "Wins", "Losses", "Ties"]
+    names = [n for n in order if n in groups] + sorted(n for n in groups if n not in order)
+    return {
+        name: Lengths(len(groups[name]), sum(groups[name]) / len(groups[name]), min(groups[name]), max(groups[name]))
+        for name in names
+    }

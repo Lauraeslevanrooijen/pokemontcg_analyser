@@ -104,3 +104,20 @@ def test_turn_lengths_and_tempo(tmp_path: Path) -> None:
 
     # by hand: I went first, so turn 1 (60s) is mine and turn 2 (20s) the opponent's
     assert insights.tempo(matches, events) == {"you": (75.0, 2), "opponent": (25.0, 2)}
+
+
+def test_game_lengths_overall_by_result_and_by_deck(tmp_path: Path) -> None:
+    db = tmp_path / "m.db"
+    storage.log_match(deck="Pult", result="win", db_path=db)
+    storage.log_match(deck="Pult", result="loss", db_path=db)
+    storage.log_match(deck="Slob", result="loss", db_path=db)
+    pult_win, pult_loss, slob_loss = sorted(storage.list_matches(db_path=db), key=lambda m: m.id)
+
+    found = insights.game_lengths([(pult_win, 7), (pult_loss, 16), (slob_loss, 5)])
+
+    assert list(found) == ["All games", "Wins", "Losses", "With Pult", "With Slob"]
+    everything = found["All games"]
+    assert (everything.games, round(everything.average, 2), everything.shortest, everything.longest) == (3, 9.33, 5, 16)
+    assert found["Losses"].average == 10.5
+    assert found["With Pult"].average == 11.5
+    assert insights.game_lengths([]) == {}

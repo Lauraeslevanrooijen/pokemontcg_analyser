@@ -54,7 +54,8 @@ Early scaffold. Working today:
   opponent deck can carry a note that shows on every match against it.
 - The Decks page shows what you actually play, from the battle logs: how
   often each card is used, which listed cards never are, and which cards
-  the logs show that the saved list lacks. The Stats page shows turn tempo.
+  the logs show that the saved list lacks. The Stats page shows turn tempo
+  and how many turns games take.
 - The database and spoken notes are copied once a day to iCloud Drive
   (`Pokemon TCG Analyser backups`, or Documents without iCloud; set
   `POKEMONTCG_BACKUP_DIR` for another place), keeping 14 days. Recordings
