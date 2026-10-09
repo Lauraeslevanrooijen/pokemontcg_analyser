@@ -1516,6 +1516,32 @@ def edit_event(event_id: int, note: NoteIn):
     return _event_json(_require_event(event_id))
 
 
+class MoveIn(BaseModel):
+    direction: int  # -1 for the line before, 1 for the next
+
+
+@app.post("/events/{event_id}/move")
+def move_log_comment(event_id: int, body: MoveIn):
+    """Move a comment on a battle log line to the line before or after it,
+    across turn boundaries; at either end of the log it stays put."""
+    event = _require_event(event_id)
+    if event.log_turn is None:
+        raise HTTPException(status_code=400, detail="Not a comment on the battle log")
+    match = _require_match(event.match_id)
+    if not match.battle_log or body.direction not in (-1, 1):
+        raise HTTPException(status_code=400, detail="Nowhere to move it to")
+    log = battlelog.parse(match.battle_log)
+    # every line of the log in order: the setup is turn 0
+    lines = [(0, index) for index in range(len(log.setup))]
+    for number, turn in enumerate(log.turns, start=1):
+        lines += [(number, index) for index in range(len(turn.actions))]
+    here = (event.log_turn, event.log_action or 0)
+    if here in lines:
+        target = lines[min(len(lines) - 1, max(0, lines.index(here) + body.direction))]
+        storage.set_log_position(event_id, *target, db_path=db_path())
+    return _event_json(_require_event(event_id))
+
+
 @app.delete("/events/{event_id}")
 def delete_event(event_id: int):
     event = _require_event(event_id)

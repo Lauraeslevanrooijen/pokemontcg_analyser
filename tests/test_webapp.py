@@ -1067,3 +1067,30 @@ def test_an_empty_database_is_not_backed_up(client: TestClient) -> None:
 
     assert list(webapp.BACKUP_DIR.glob("matches-*.db")) == []
     assert "Backed up" not in page and "did not work" not in page
+
+
+def test_move_a_comment_along_the_battle_log(client: TestClient) -> None:
+    client.post("/matches", data={"deck": "Pult", "result": "win", "battle_log": _log_text()})
+    match_id = storage.list_matches()[0].id
+    note = client.post(
+        f"/matches/{match_id}/notes", json={"text": "here", "log_turn": 1, "log_action": 3}
+    ).json()
+
+    def move(direction: int) -> tuple[int, int]:
+        moved = client.post(f"/events/{note['id']}/move", json={"direction": direction}).json()
+        return moved["log_turn"], moved["log_action"]
+
+    assert move(-1) == (1, 2)
+    assert move(1) == (1, 3)
+    assert move(1) == (2, 0)  # turn 1 has four lines: on into turn 2
+    assert move(-1) == (1, 3)
+    for _ in range(4):
+        move(-1)
+    assert move(-1) == (0, 5)  # back into the setup, which has seven lines
+    for _ in range(10):
+        move(-1)
+    assert move(-1) == (0, 0)  # and no further than the first line
+
+    # a note on the video is not a log comment
+    plain = client.post(f"/matches/{match_id}/notes", json={"text": "x", "offset_seconds": 1.0}).json()
+    assert client.post(f"/events/{plain['id']}/move", json={"direction": 1}).status_code == 400

@@ -669,7 +669,23 @@
       if (event.audio_url) body.appendChild(voiceButton(event));
       if (event.transcribing && !event.detail) body.appendChild(el('span', 'muted', 'writing it out…'));
       if (event.detail) body.appendChild(el('span', '', event.detail));
-      row.append(body, actionButtons(event));
+      // A comment put on the wrong line can be moved a line up or down
+      // (also across turns) instead of being typed again.
+      const actions = actionButtons(event);
+      for (const [symbol, direction, title] of [['\u2193', 1, 'Move to the next line'], ['\u2191', -1, 'Move to the line before']]) {
+        const move = el('button', '', symbol);
+        move.type = 'button';
+        move.title = title;
+        move.addEventListener('click', async (ev) => {
+          ev.stopPropagation();
+          const moved = await api('POST', `/events/${event.id}/move`, { direction });
+          if (!moved) return;
+          events = events.map((e) => (e.id === moved.id ? moved : e));
+          render();
+        });
+        actions.prepend(move);
+      }
+      row.append(body, actions);
       return row;
     }
 
@@ -1075,9 +1091,16 @@
     });
 
     function render() {
+      // The list is rebuilt from scratch, which would leave the panel (and
+      // on a narrow window the page) scrolled back to the top: cancelling
+      // a comment halfway down a long log threw you back to the start.
+      const panelScroll = timelinePanel.scrollTop;
+      const pageScroll = window.scrollY;
       renderTimeline();
       renderMarkers();
       renderTempo();
+      timelinePanel.scrollTop = panelScroll;
+      window.scrollTo(window.scrollX, pageScroll);
       followLog();  // the marks are gone with the old list
     }
 

@@ -524,6 +524,17 @@ def update_note(
         )
 
 
+def set_log_position(
+    event_id: int, log_turn: int, log_action: int, db_path: Path | None = None
+) -> None:
+    """Put a comment on another line of the battle log."""
+    with connect(db_path) as conn:
+        conn.execute(
+            "UPDATE match_events SET log_turn = ?, log_action = ? WHERE id = ?",
+            (log_turn, log_action, event_id),
+        )
+
+
 def set_event_detail(event_id: int, detail: str, db_path: Path | None = None) -> None:
     """Set an event's text, leaving its kind and label alone."""
     with connect(db_path) as conn:
