@@ -22,9 +22,9 @@ import urllib.request
 import webbrowser
 from pathlib import Path
 
-APP_NAME = "Pokemon TCG Analyser"
+APP_NAME = "PTCG Live Analyser"
 BUNDLE_ID = "local.pokemontcg-analyser"
-PAGE_MARKER = "Pokémon TCG Live analyser"
+PAGE_MARKER = APP_NAME
 
 BROWSERS = [
     "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",

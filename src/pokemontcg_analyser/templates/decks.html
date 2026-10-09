@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Decks — Pokémon TCG Live analyser{% endblock %}
+{% block title %}Decks — {{ app_name }}{% endblock %}
 {% macro record(r) %}{% if r.total %}{{ r.wins }}&ndash;{{ r.losses }}&ndash;{{ r.ties }} <span class="muted">({{ '%.0f%%' % (r.win_rate * 100) }})</span>{% else %}<span class="muted">no games yet</span>{% endif %}{% endmacro %}
 {% macro card_list(sections) %}
   {% for section in sections %}

@@ -29,6 +29,7 @@ from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 
 from . import battlelog, cards, decks, insights, logtimes, recorder, storage, transcribe, turns
+from .desktop import APP_NAME
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
 RECORDINGS_DIR = Path("recordings")
@@ -108,7 +109,7 @@ async def lifespan(app: FastAPI):
         _recording.stop()
 
 
-app = FastAPI(title="Pokémon TCG Live analyser", lifespan=lifespan)
+app = FastAPI(title=APP_NAME, lifespan=lifespan)
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
 
@@ -118,6 +119,7 @@ def _localtime(played_at_utc: str) -> str:
 
 
 templates.env.filters["localtime"] = _localtime
+templates.env.globals["app_name"] = APP_NAME
 
 RECORDINGS_DIR.mkdir(exist_ok=True)
 app.mount("/media", StaticFiles(directory=str(RECORDINGS_DIR)), name="media")
@@ -197,7 +199,7 @@ def purge_old_recordings() -> int:
 _ICLOUD = Path.home() / "Library" / "Mobile Documents" / "com~apple~CloudDocs"
 BACKUP_DIR = Path(
     os.environ.get("POKEMONTCG_BACKUP_DIR")
-    or (_ICLOUD if _ICLOUD.is_dir() else Path.home() / "Documents") / "Pokemon TCG Analyser backups"
+    or (_ICLOUD if _ICLOUD.is_dir() else Path.home() / "Documents") / f"{APP_NAME} backups"
 )
 BACKUPS_KEPT = 14
 

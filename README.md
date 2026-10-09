@@ -1,4 +1,4 @@
-# pokemontcg_analyser
+# PTCG Live Analyser
 
 Record your own Pokémon TCG Live matches and analyse them afterwards: build a
 turn-by-turn event timeline, recognise cards that appeared on screen, and
@@ -58,7 +58,7 @@ Early scaffold. Working today:
   the logs show that the saved list lacks. The Stats page shows turn tempo
   and how many turns games take.
 - The database and spoken notes are copied once a day to iCloud Drive
-  (`Pokemon TCG Analyser backups`, or Documents without iCloud; set
+  (`PTCG Live Analyser backups`, or Documents without iCloud; set
   `POKEMONTCG_BACKUP_DIR` for another place), keeping 14 days. Recordings
   are not backed up, and can be set to be deleted after a number of weeks.
 - From the battle logs the Stats page also shows who takes the first Prize
@@ -93,13 +93,13 @@ page. The app is a single download with everything inside it.
 
 It needs a Mac with an Apple chip (M1 or newer) and macOS 14 or later.
 
-1. Download `Pokemon TCG Analyser.dmg` from the Releases page of this
+1. Download `PTCG Live Analyser.dmg` from the Releases page of this
    repository and open it.
-2. Drag **Pokemon TCG Analyser** onto the **Applications** folder next to it.
+2. Drag **PTCG Live Analyser** onto the **Applications** folder next to it.
 3. Open it from Applications. The first time, macOS says it cannot check
    the app and refuses: the app is not signed with a paid Apple developer
    account. Open **System Settings > Privacy & Security**, scroll down to
-   the message about Pokemon TCG Analyser and click **Open Anyway**. This is
+   the message about PTCG Live Analyser and click **Open Anyway**. This is
    only needed once.
 4. Click **Start recording**. macOS asks for permission to record the
    screen. Allow it, quit the app (Cmd+Q) and open it again. From then on
@@ -167,7 +167,7 @@ pokemontcg-analyser cards sync
 pokemontcg-analyser serve
 # -> http://127.0.0.1:8000
 
-# Or as a desktop app: install once, then start "Pokemon TCG Analyser" from
+# Or as a desktop app: install once, then start "PTCG Live Analyser" from
 # Spotlight/Launchpad. Quit with Cmd+Q; that also stops the server.
 # Run this from the project folder — the app keeps its data here.
 pokemontcg-analyser install-app

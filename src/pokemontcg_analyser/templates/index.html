@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Matches — Pokémon TCG Live analyser{% endblock %}
+{% block title %}Matches — {{ app_name }}{% endblock %}
 {% block content %}
   {% if recording_problem and not recording %}
     <div class="panel" style="margin-bottom: 24px; border-color: var(--loss);">
@@ -7,7 +7,7 @@
         <strong>The recording did not start: macOS has not allowed this app to record the screen</strong>
         <ol style="margin: 8px 0; padding-left: 20px;">
           <li>Open <em>System Settings &rarr; Privacy &amp; Security &rarr; Screen &amp; System Audio Recording</em>.</li>
-          <li>Switch on <strong>Pokemon TCG Analyser</strong>. If it is not in the list, add it with the + button
+          <li>Switch on <strong>{{ app_name }}</strong>. If it is not in the list, add it with the + button
               and pick it from your Applications folder.</li>
           <li>Quit this app with Cmd+Q and open it again &mdash; the permission only counts after a restart.</li>
         </ol>

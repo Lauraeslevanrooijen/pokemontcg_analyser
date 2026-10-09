@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{% block title %}Pokémon TCG Live analyser{% endblock %}</title>
+  <title>{% block title %}{{ app_name }}{% endblock %}</title>
   <style>
     :root {
       color-scheme: light dark;
@@ -85,7 +85,7 @@
 </head>
 <body>
   <header>
-    <a href="/">Pokémon TCG Live analyser</a>
+    <a href="/">{{ app_name }}</a>
     <nav>
       <a href="/">Matches</a>
       <a href="/decks">Decks</a>

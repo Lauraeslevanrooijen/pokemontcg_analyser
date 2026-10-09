@@ -13,7 +13,7 @@ def test_install_app_writes_a_launcher_bundle(tmp_path: Path, monkeypatch) -> No
 
     bundle = desktop.install_app(data_dir=data_dir, port=8123, apps_dir=tmp_path / "Apps")
 
-    assert bundle == tmp_path / "Apps" / "Pokemon TCG Analyser.app"
+    assert bundle == tmp_path / "Apps" / "PTCG Live Analyser.app"
     info = plistlib.loads((bundle / "Contents" / "Info.plist").read_bytes())
     assert info["CFBundleExecutable"] == "launcher"
     launcher = bundle / "Contents" / "MacOS" / "launcher"
