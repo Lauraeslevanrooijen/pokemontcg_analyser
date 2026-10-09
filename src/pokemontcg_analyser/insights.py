@@ -240,3 +240,58 @@ def game_lengths(games: list[tuple[Match, int]]) -> dict[str, Lengths]:
         name: Lengths(len(groups[name]), sum(groups[name]) / len(groups[name]), min(groups[name]), max(groups[name]))
         for name in names
     }
+
+
+@dataclass
+class LogFacts:
+    """What one match's battle log says about how the game went."""
+
+    match: Match
+    turns: int
+    first_prize: tuple[int, str] | None  # (turn, "you" or "opponent")
+    setup: dict[str, int | None]  # my final evolutions -> own turn first in play
+    my_turns: int
+    turns_without_energy: int
+    turns_without_attack: int
+
+
+@dataclass
+class LogSummary:
+    games: int = 0
+    # who took the first Prize card ("you", "opponent", "nobody") -> record
+    first_prize: dict[str, Record] = field(default_factory=dict)
+    first_prize_turn: float | None = None  # average turn it was taken in
+    # card -> (games it came into play, average own turn, games it never did)
+    setup: dict[str, tuple[int, float | None, int]] = field(default_factory=dict)
+    my_turns: int = 0
+    turns_without_energy: int = 0
+    turns_without_attack: int = 0
+    average_turns: float | None = None
+
+
+def summarise_logs(facts: list[LogFacts]) -> LogSummary:
+    summary = LogSummary(games=len(facts))
+    prize_turns: list[int] = []
+    setup: dict[str, list[int | None]] = defaultdict(list)
+    for fact in facts:
+        who = fact.first_prize[1] if fact.first_prize else "nobody"
+        summary.first_prize.setdefault(who, Record()).add(fact.match.result)
+        if fact.first_prize:
+            prize_turns.append(fact.first_prize[0])
+        for card, turn in fact.setup.items():
+            setup[card].append(turn)
+        summary.my_turns += fact.my_turns
+        summary.turns_without_energy += fact.turns_without_energy
+        summary.turns_without_attack += fact.turns_without_attack
+    if prize_turns:
+        summary.first_prize_turn = sum(prize_turns) / len(prize_turns)
+    if facts:
+        summary.average_turns = sum(f.turns for f in facts) / len(facts)
+    for card, turns_list in sorted(setup.items(), key=lambda item: (-len(item[1]), item[0])):
+        came = [t for t in turns_list if t is not None]
+        summary.setup[card] = (
+            len(came),
+            sum(came) / len(came) if came else None,
+            len(turns_list) - len(came),
+        )
+    return summary

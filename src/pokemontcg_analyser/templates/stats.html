@@ -73,6 +73,68 @@
       </table>
     {% endif %}
 
+    {% if logs.games %}
+      <h2>How your games go</h2>
+      <p class="muted">From the {{ logs.games }} {{ 'game' if logs.games == 1 else 'games' }} with a battle log.</p>
+      <table>
+        <thead><tr><th>First Prize card taken by</th><th class="num">Games</th><th class="num">W&ndash;L&ndash;T</th><th class="num">Win rate</th></tr></thead>
+        <tbody>
+          {% for key, name in [('you', 'You'), ('opponent', 'Opponent'), ('nobody', 'Nobody (game ended first)')] %}
+            {% if key in logs.first_prize %}
+              {% set r = logs.first_prize[key] %}
+              <tr>
+                <td>{{ name }}</td>
+                <td class="num">{{ r.total }}</td>
+                <td class="num">{{ r.wins }}&ndash;{{ r.losses }}&ndash;{{ r.ties }}</td>
+                <td class="num">{{ '%.0f%%' % (r.win_rate * 100) }}</td>
+              </tr>
+            {% endif %}
+          {% endfor %}
+        </tbody>
+      </table>
+      {% if logs.first_prize_turn %}
+        <p class="muted" style="font-size: 0.9em;">On average the first Prize card is taken in turn {{ '%.1f' % logs.first_prize_turn }}.</p>
+      {% endif %}
+
+      {% if logs.setup %}
+        <table>
+          <thead><tr><th>Getting set up</th><th class="num">In play in</th><th class="num">First in play, your turn</th><th class="num">Never in play</th></tr></thead>
+          <tbody>
+            {% for card, (came, turn, never) in logs.setup.items() %}
+              <tr>
+                <td>{{ card }}</td>
+                <td class="num">{{ came }} of {{ came + never }}</td>
+                <td class="num">{{ '%.1f' % turn if turn is not none else '—' }}</td>
+                <td class="num">{{ never }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        <p class="muted" style="font-size: 0.9em;">
+          Counted in your own turns: 2.0 means it was in play, on average, by your second turn.
+        </p>
+      {% endif %}
+
+      {% if logs.my_turns %}
+        <table>
+          <thead><tr><th>Your turns</th><th class="num">Turns</th><th class="num">Share</th><th></th></tr></thead>
+          <tbody>
+            {% for name, count in [('Without attaching an Energy', logs.turns_without_energy), ('Without attacking', logs.turns_without_attack)] %}
+              <tr>
+                <td>{{ name }}</td>
+                <td class="num">{{ count }} of {{ logs.my_turns }}</td>
+                <td class="num">{{ '%.0f%%' % (count / logs.my_turns * 100) }}</td>
+                <td style="width: 30%;"><span class="bar" style="width: {{ '%.0f' % (count / logs.my_turns * 100) }}%; background: var(--muted);"></span></td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        <p class="muted" style="font-size: 0.9em;">
+          The player going first cannot attack on turn one, so one such turn per game is normal.
+        </p>
+      {% endif %}
+    {% endif %}
+
     {% if tempo %}
       <h2>Tempo</h2>
       <p class="muted">Average length of a turn, from the turn markers. The last turn of each game is left out.</p>

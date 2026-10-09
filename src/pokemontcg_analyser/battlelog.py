@@ -178,6 +178,54 @@ class BattleLog:
                     seen.update(card.strip() for card in many.group(2).split(","))
         return seen
 
+    def final_forms(self, player: str | None) -> list[str]:
+        """The ends of the evolution lines a player built, in the order
+        they first appeared: the Pokémon the deck is set up to get out."""
+        evolved_from, evolved_to = set(), []
+        for action in self._actions():
+            hit = _EVOLVED.match(action.text)
+            if hit and hit.group(1) == player:
+                evolved_from.add(hit.group(2))
+                if hit.group(3) not in evolved_to:
+                    evolved_to.append(hit.group(3))
+        return [name for name in evolved_to if name not in evolved_from]
+
+    def own_turns(self, player: str | None) -> list[tuple[int, LogTurn]]:
+        """A player's turns as (number among their own turns, turn)."""
+        mine = [turn for turn in self.turns if turn.player == player]
+        return list(enumerate(mine, start=1))
+
+    def first_prize(self) -> tuple[int, str] | None:
+        """The turn the first Prize card was taken in, and by which side."""
+        for point in self.prize_race():
+            if point["you"] or point["opponent"]:
+                return point["turn"], "you" if point["you"] else "opponent"
+        return None
+
+    def first_in_play(self, player: str | None, card: str) -> int | None:
+        """Which of the player's own turns a card first came into play in
+        (played or evolved into); None if it never did."""
+        for number, turn in self.own_turns(player):
+            if any(name == card for _, name in self.plays(turn)):
+                return number
+        return None
+
+    def turn_activity(self, player: str | None) -> list[dict]:
+        """For each of a player's turns: whether they attached an Energy
+        and whether they attacked."""
+        activity = []
+        for number, turn in self.own_turns(player):
+            attached = attacked = False
+            for action in turn.actions:
+                attach = _ATTACHED.match(action.text)
+                if attach and attach.group(1) == player and "Energy" in attach.group(2):
+                    attached = True
+                attack = _ATTACK.match(action.text)
+                if attack and attack.group(1) == player:
+                    attacked = True
+            activity.append({"turn": number, "attached": attached, "attacked": attacked})
+        return activity
+
     def _actions(self) -> list[Action]:
         return self.setup + [a for turn in self.turns for a in turn.actions]
 
@@ -194,14 +242,7 @@ class BattleLog:
         one game to the next."""
         if not player:
             return None
-        evolved_from, evolved_to = set(), []
-        for action in self._actions():
-            hit = _EVOLVED.match(action.text)
-            if hit and hit.group(1) == player:
-                evolved_from.add(hit.group(2))
-                if hit.group(3) not in evolved_to:
-                    evolved_to.append(hit.group(3))
-        final_forms = [name for name in evolved_to if name not in evolved_from]
+        final_forms = self.final_forms(player)
         if final_forms:
             return " / ".join(sorted(final_forms[:2]))
         attacks: dict[str, int] = {}

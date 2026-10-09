@@ -89,7 +89,20 @@
                   <div class="muted" style="font-size: 0.85em; {{ 'color: var(--loss);' if row.cards != 60 else '' }}">{{ row.cards }} cards</div>
                 </td>
                 <td style="white-space: nowrap;">{{ row.version.created_at_utc[:10] }}</td>
-                <td style="white-space: nowrap;">{{ record(row.record) }}</td>
+                <td style="white-space: nowrap;">
+                  {{ record(row.record) }}
+                  {% if row.logs.games %}
+                    {# how games with this list went, to compare versions #}
+                    <div class="muted" style="font-size: 0.85em; white-space: normal;">
+                      {{ '%.1f' % row.logs.average_turns }} turns per game
+                      {% if row.logs.first_prize_turn %}&middot; first Prize in turn {{ '%.1f' % row.logs.first_prize_turn }}{% endif %}
+                      {% for card, (came, turn, never) in row.logs.setup.items() %}
+                        {% if turn is not none %}&middot; {{ card }} by your turn {{ '%.1f' % turn }}{% endif %}
+                      {% endfor %}
+                      <span title="games with a battle log">({{ row.logs.games }} logged)</span>
+                    </div>
+                  {% endif %}
+                </td>
                 <td>
                   {% if row.version.note %}<div>{{ row.version.note }}</div>{% endif %}
                   {% for change, card in row.changes %}
@@ -145,6 +158,27 @@
           {% if d.never_played %}
             <p class="muted" style="margin: 8px 0;">In the list but never played in these games: {{ d.never_played|join(', ') }}.</p>
           {% endif %}
+        </details>
+      {% endif %}
+
+      {% if d.odds %}
+        <details>
+          <summary>Opening hand odds for this list</summary>
+          <p class="muted" style="margin: 8px 0; font-size: 0.9em;">
+            The chance, by the numbers in the list alone, for the first seven cards drawn. What actually happened
+            is under Opening hands on the Stats page.
+          </p>
+          <table style="font-size: 0.95em;">
+            <tbody>
+              {% for name, chance in d.odds %}
+                <tr>
+                  <td>{{ name }}</td>
+                  <td class="num">{{ '%.0f%%' % (chance * 100) }}</td>
+                  <td style="width: 40%;"><span class="bar" style="width: {{ '%.0f' % (chance * 100) }}%; background: var(--muted);"></span></td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
         </details>
       {% endif %}
 

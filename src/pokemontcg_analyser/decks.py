@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from math import comb
 
 # A card line is "<count> <name ...>", e.g. "4 Dragapult ex TWM 130".
 # Section headers such as "Pokémon: 12" start with a word and are skipped.
@@ -104,3 +105,52 @@ def sections(decklist: str) -> list[Section]:
             ListedCard(int(card.group(1)), name, printing.group(0).strip() if printing else "")
         )
     return [section for section in found if section.cards]
+
+
+HAND_SIZE = 7
+
+
+def chance_of_none(copies: int, deck_size: int, hand: int = HAND_SIZE) -> float:
+    """The chance that none of `copies` cards are among `hand` cards drawn
+    from a deck of `deck_size`."""
+    if deck_size < hand or copies <= 0:
+        return 1.0 if copies <= 0 else 0.0
+    return comb(deck_size - copies, hand) / comb(deck_size, hand)
+
+
+def opening_odds(decklist: str, kinds: dict[str, str]) -> list[tuple[str, float]]:
+    """What a list's opening seven cards look like, by chance alone.
+    `kinds` says what each card is ("Basic Pokémon", "Supporter", ...);
+    lines about a kind are left out when not every card's kind is known,
+    as the count would be too low."""
+    cards = parse_names(decklist)
+    size = sum(cards.values())
+    if size < HAND_SIZE:
+        return []
+    complete = all(name in kinds for name in cards)
+
+    def total(kind: str) -> int:
+        return sum(count for name, count in cards.items() if kinds.get(name) == kind)
+
+    odds: list[tuple[str, float]] = []
+    if complete:
+        odds.append(("No Basic Pokémon (a mulligan)", chance_of_none(total("Basic Pokémon"), size)))
+        odds.append(("No Supporter", chance_of_none(total("Supporter"), size)))
+        odds.append(("No Energy", chance_of_none(total("Energy"), size)))
+    basics = sorted(
+        ((name, count) for name, count in cards.items() if kinds.get(name) == "Basic Pokémon"),
+        key=lambda item: (-item[1], item[0]),
+    )
+    for name, count in basics:
+        odds.append((f"At least one {name}", 1 - chance_of_none(count, size)))
+    return odds
+
+
+def parse_names(decklist: str) -> dict[str, int]:
+    """Card name (without set code and number) -> copies, adding up
+    different printings of the same card."""
+    names: dict[str, int] = {}
+    for section in sections(decklist):
+        for card in section.cards:
+            names[card.name] = names.get(card.name, 0) + card.count
+    return names

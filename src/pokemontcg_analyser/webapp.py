@@ -340,6 +340,7 @@ def stats(request: Request):
             "openings": insights.openings(hands),
             "tempo": insights.tempo(matches, events),
             "lengths": insights.game_lengths(lengths),
+            "logs": insights.summarise_logs(_deck_log_facts(matches)),
         },
     )
 
@@ -352,6 +353,7 @@ def decks_page(request: Request, add: str = ""):
     deck_views = []
     for name in names:
         deck_matches = [m for m in matches if m.deck == name]
+        deck_facts = _deck_log_facts(deck_matches)
         rows = []
         previous = None
         for number, version in enumerate((v for v in versions if v.deck == name), start=1):
@@ -363,6 +365,9 @@ def decks_page(request: Request, add: str = ""):
                 {
                     "number": number,
                     "version": version,
+                    "logs": insights.summarise_logs(
+                        [f for f in deck_facts if f.match.deck_version_id == version.id]
+                    ),
                     "record": record,
                     "cards": decks.card_count(version.decklist),
                     "sections": decks.sections(version.decklist),
@@ -403,6 +408,20 @@ def decks_page(request: Request, add: str = ""):
                 "versions": list(reversed(rows)),  # newest first
                 "current": previous,
                 "logged_games": len(logged),
+                "odds": (
+                    decks.opening_odds(
+                        previous.decklist,
+                        _card_kinds(
+                            {
+                                c.name: c
+                                for section in decks.sections(previous.decklist)
+                                for c in section.cards
+                            }
+                        ),
+                    )
+                    if previous
+                    else []
+                ),
                 "usage": sorted(usage.items(), key=lambda item: (-item[1][0], -item[1][1], item[0])),
                 "never_played": sorted(listed - set(usage)) if logged else [],
                 "missing": missing,
@@ -440,6 +459,155 @@ def save_deck_version(
         raise HTTPException(status_code=400, detail="A deck needs a name and a list")
     storage.add_deck_version(deck, decklist, note.strip() or None, db_path=db_path())
     return RedirectResponse("/decks", status_code=303)
+
+
+@app.get("/opponents")
+def opponents(request: Request):
+    """Everything known about each deck played against, in one place."""
+    matches = storage.list_matches(db_path=db_path())
+    notes = storage.matchup_notes(db_path=db_path())
+    by_deck: dict[str, dict] = {}
+    for match in matches:  # newest first
+        if not match.opponent_deck:
+            continue
+        entry = by_deck.setdefault(
+            match.opponent_deck,
+            {"name": match.opponent_deck, "record": insights.Record(), "matches": [], "cards": {}, "logged": 0},
+        )
+        entry["record"].add(match.result)
+        entry["matches"].append(match)
+        if match.battle_log:
+            log = battlelog.parse(match.battle_log)
+            entry["logged"] += 1
+            for card in log.cards_played(log.opponent):
+                entry["cards"][card] = entry["cards"].get(card, 0) + 1
+    views = []
+    for entry in by_deck.values():
+        entry["note"] = notes.get(entry["name"], "")
+        entry["cards"] = sorted(entry["cards"].items(), key=lambda item: (-item[1], item[0]))
+        views.append(entry)
+    views.sort(key=lambda e: (-e["record"].total, e["name"].lower()))
+    return templates.TemplateResponse(request, "opponents.html", {"opponents": views})
+
+
+@app.get("/weeks")
+def weeks(request: Request):
+    """What was played each week, with the lessons and misplays noted."""
+    matches = storage.list_matches(db_path=db_path())
+    by_match: dict[int, list[storage.Event]] = {}
+    for event in storage.list_all_events(db_path=db_path()):
+        by_match.setdefault(event.match_id, []).append(event)
+    grouped: dict[tuple[int, int], dict] = {}
+    for match in matches:  # newest first, so weeks come out newest first too
+        played = datetime.fromisoformat(match.played_at_utc).astimezone()
+        year, week, _ = played.isocalendar()
+        monday = (played - timedelta(days=played.weekday())).date()
+        entry = grouped.setdefault(
+            (year, week),
+            {
+                "monday": monday,
+                "sunday": monday + timedelta(days=6),
+                "record": insights.Record(),
+                "decks": {},
+                "lessons": [],
+                "misplays": [],
+                "labels": {key: 0 for key in storage.LABELS},
+            },
+        )
+        entry["record"].add(match.result)
+        entry["decks"].setdefault(match.deck, insights.Record()).add(match.result)
+        if match.lesson:
+            entry["lessons"].append((match, match.lesson))
+        for event in by_match.get(match.id, []):
+            if event.label in entry["labels"]:
+                entry["labels"][event.label] += 1
+            if event.label == "misplay":
+                entry["misplays"].append((match, event))
+    return templates.TemplateResponse(
+        request, "weeks.html", {"weeks": list(grouped.values()), "labels": storage.LABELS}
+    )
+
+
+def _clock(seconds: float) -> str:
+    return f"{int(seconds // 60)}:{int(seconds % 60):02d}"
+
+
+@app.get("/matches/{match_id}/export")
+def export_match(match_id: int):
+    """A match as a text file: result, lesson, the battle log turn by turn,
+    and every note and comment where it belongs."""
+    match = _require_match(match_id)
+    events = storage.list_events(match_id, db_path=db_path())
+    log = battlelog.parse(match.battle_log) if match.battle_log else None
+    played = datetime.fromisoformat(match.played_at_utc).astimezone()
+    lines = [
+        f"# {match.deck} vs {match.opponent_deck or '?'} — {match.result}",
+        "",
+        f"Played {played.strftime('%Y-%m-%d %H:%M')}"
+        + (f", went {match.turn_order}" if match.turn_order else ""),
+    ]
+    if match.lesson:
+        lines += ["", f"**Lesson:** {match.lesson}"]
+    note = storage.matchup_notes(db_path=db_path()).get(match.opponent_deck or "")
+    if note:
+        lines += ["", f"**Against {match.opponent_deck}:** {note}"]
+    if match.notes:
+        lines += ["", match.notes]
+
+    def written(event: storage.Event) -> str:
+        label = f"[{storage.LABELS[event.label]}] " if event.label else ""
+        text = event.detail or ("(spoken note)" if event.audio_file else "")
+        return f"{label}{text}".strip()
+
+    if log is not None and log.turns:
+        hand = log.opening_hand()
+        if hand:
+            lines += ["", f"**Opening hand:** {', '.join(hand)}"]
+        race = log.prize_race()
+        lines += ["", f"**Prize cards taken:** you {race[-1]['you']}, opponent {race[-1]['opponent']}"]
+        comments: dict[tuple[int, int], list[storage.Event]] = {}
+        for event in events:
+            if event.log_turn is not None:
+                comments.setdefault((event.log_turn, event.log_action or 0), []).append(event)
+        marks = sorted(e.video_offset_seconds for e in events if e.kind == "turn")
+        timed = sorted(
+            (e for e in events if e.kind in ("note", "mark") and e.log_turn is None and e.video_offset_seconds is not None),
+            key=lambda e: e.video_offset_seconds,
+        )
+        aligned = len(marks) == len(log.turns)
+        for number, turn in enumerate(log.turns, start=1):
+            owner = "you" if turn.player == log.me else "opponent"
+            at = f" ({_clock(marks[number - 1])})" if aligned else ""
+            lines += ["", f"## Turn {number} — {owner}{at}", ""]
+            for index, action in enumerate(log.narrated(turn)):
+                lines.append(f"{index + 1}. {action.text}")
+                lines += [f"   - {detail}" for detail in action.details]
+                lines += [f"   > {written(c)}" for c in comments.get((number, index), [])]
+            if aligned:
+                end = marks[number] if number < len(marks) else float("inf")
+                for event in timed:
+                    if marks[number - 1] <= event.video_offset_seconds < end:
+                        lines.append(f"- Note at {_clock(event.video_offset_seconds)}: {written(event) or 'flagged while recording'}")
+        if not aligned and timed:
+            lines += ["", "## Notes on the video", ""]
+            lines += [f"- {_clock(e.video_offset_seconds)}: {written(e) or 'flagged while recording'}" for e in timed]
+    else:
+        notes = [e for e in events if e.kind in ("note", "mark")]
+        if notes:
+            lines += ["", "## Notes", ""]
+            for event in notes:
+                at = _clock(event.video_offset_seconds) if event.video_offset_seconds is not None else "match"
+                lines.append(f"- {at}: {written(event) or 'flagged while recording'}")
+    whole = [e for e in events if e.kind == "note" and e.video_offset_seconds is None and e.log_turn is None]
+    if whole and log is not None and log.turns:
+        lines += ["", "## Notes on the match", ""] + [f"- {written(e)}" for e in whole]
+    name = f"{played.strftime('%Y-%m-%d')} {match.deck} vs {match.opponent_deck or 'unknown'}.md"
+    safe = "".join(ch if ch.isalnum() or ch in " .-_" else "-" for ch in name)
+    return Response(
+        "\n".join(lines) + "\n",
+        media_type="text/markdown; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{safe}"'},
+    )
 
 
 @app.get("/moments")
@@ -619,6 +787,7 @@ def match_detail(request: Request, match_id: int):
                 }
             ),
             "not_in_list": _played_but_not_listed(match),
+            "facts": _log_facts(match),
             "wrap_up": request.query_params.get("wrapup") == "1",
         },
     )
@@ -680,6 +849,42 @@ def _apply_battle_log(match_id: int, text: str, log: battlelog.BattleLog) -> Non
         name = _opponent_deck_name(log, match_id)
         if name:
             storage.set_opponent_deck(match_id, name, auto=True, db_path=db_path())
+
+
+def _log_facts(match: storage.Match, key_cards: list[str] | None = None) -> insights.LogFacts | None:
+    """What a match's battle log says about how the game went. `key_cards`
+    are the Pokémon whose arrival is tracked; by default the final
+    evolutions seen in this game."""
+    if not match.battle_log:
+        return None
+    log = battlelog.parse(match.battle_log)
+    if not log.turns or not log.me:
+        return None
+    activity = log.turn_activity(log.me)
+    tracked = key_cards if key_cards is not None else log.final_forms(log.me)
+    return insights.LogFacts(
+        match=match,
+        turns=len(log.turns),
+        first_prize=log.first_prize(),
+        setup={card: log.first_in_play(log.me, card) for card in tracked},
+        my_turns=len(activity),
+        turns_without_energy=sum(not turn["attached"] for turn in activity),
+        turns_without_attack=sum(not turn["attacked"] for turn in activity),
+    )
+
+
+def _deck_log_facts(matches: list[storage.Match]) -> list[insights.LogFacts]:
+    """Log facts for a set of matches, tracking per deck the same Pokémon
+    in every game: any final evolution that deck got out in any of them.
+    A game where one never arrived then counts as "never", not as absent."""
+    key_cards: dict[str, list[str]] = {}
+    for match in matches:
+        if match.battle_log:
+            log = battlelog.parse(match.battle_log)
+            known = key_cards.setdefault(match.deck, [])
+            known += [card for card in log.final_forms(log.me) if card not in known]
+    facts = [_log_facts(match, key_cards.get(match.deck, [])) for match in matches]
+    return [fact for fact in facts if fact is not None]
 
 
 def _played_but_not_listed(match: storage.Match) -> list[str]:

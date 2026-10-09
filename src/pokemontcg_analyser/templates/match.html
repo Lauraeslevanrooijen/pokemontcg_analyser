@@ -182,6 +182,10 @@
         <button type="submit">Save</button>
       </form>
       <datalist id="known-decks">{% for d in known_decks %}<option value="{{ d }}">{% endfor %}</datalist>
+      <p style="margin: 8px 0;">
+        <a href="/matches/{{ match.id }}/export" class="muted">Download this match as text</a>
+        <span class="muted">&mdash; result, lesson, the log turn by turn, and your notes and comments.</span>
+      </p>
       <form method="post" action="/matches/{{ match.id }}/delete"
             onsubmit="return confirm('Delete this match?\n\nIts notes, spoken notes{{ ' and recording' if video_filename else '' }} are deleted with it. This cannot be undone.');">
         <button type="submit" class="stop" style="padding: 4px 12px;">Delete match</button>
@@ -253,6 +257,20 @@
             <span><i style="background: var(--series-opponent);"></i>Opponent</span>
           </div>
           <div class="race" id="prize-race"></div>
+          {% if facts %}
+            <p class="muted" style="font-size: 0.9em; margin: 8px 0;">
+              {% if facts.first_prize %}
+                First Prize card: {{ 'you' if facts.first_prize[1] == 'you' else 'your opponent' }}, in turn {{ facts.first_prize[0] }}.
+              {% else %}
+                No Prize cards were taken.
+              {% endif %}
+              {% for card, turn in facts.setup.items() %}
+                {{ card }} first in play in your turn {{ turn }}.
+              {% endfor %}
+              {{ facts.turns_without_energy }} of your {{ facts.my_turns }} turns without attaching an Energy,
+              {{ facts.turns_without_attack }} without attacking.
+            </p>
+          {% endif %}
           <p class="muted" id="tempo-line" style="font-size: 0.9em; margin: 8px 0;" hidden></p>
           <details>
             <summary class="muted" style="font-size: 0.85em;">As a table</summary>

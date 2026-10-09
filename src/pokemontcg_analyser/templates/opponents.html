@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% block title %}Opponents — Pokémon TCG Live analyser{% endblock %}
+{% block content %}
+  <h1>Opponents</h1>
+  {% if not opponents %}
+    <p class="muted">No matches against a named deck yet.</p>
+  {% endif %}
+  {% for o in opponents %}
+    <div class="panel" style="margin-bottom: 20px;">
+      <h2 style="margin: 0 0 4px;">{{ o.name }}</h2>
+      <p style="margin: 0 0 10px;">
+        {{ o.record.wins }}&ndash;{{ o.record.losses }}&ndash;{{ o.record.ties }}
+        <span class="muted">({{ '%.0f%%' % (o.record.win_rate * 100) }} over {{ o.record.total }} {{ 'game' if o.record.total == 1 else 'games' }})</span>
+      </p>
+      <div style="display: flex; gap: 8px; align-items: center;">
+        <input class="matchup-note" data-opponent="{{ o.name }}" value="{{ o.note }}" autocomplete="off" style="flex: 1;"
+               placeholder="What to remember against this deck">
+        <span class="muted saved" style="font-size: 0.85em; min-width: 3em;"></span>
+      </div>
+      {% if o.cards %}
+        <p class="muted" style="margin: 12px 0 4px; font-size: 0.9em;">
+          What they played, from {{ o.logged }} {{ 'game' if o.logged == 1 else 'games' }} with a battle log:
+        </p>
+        <p style="margin: 0; font-size: 0.95em;">
+          {% for card, games in o.cards %}{{ card }}{% if o.logged > 1 %} <span class="muted">({{ games }})</span>{% endif %}{{ ', ' if not loop.last else '' }}{% endfor %}
+        </p>
+      {% endif %}
+      <table style="margin-bottom: 0;">
+        <tbody>
+          {% for m in o.matches %}
+            <tr class="clickable" onclick="window.location='/matches/{{ m.id }}'">
+              <td style="white-space: nowrap; width: 1%;">{{ m.played_at_utc[:10] }}</td>
+              <td>{{ m.deck }}</td>
+              <td><span class="badge badge-{{ m.result }}">{{ m.result }}</span></td>
+              <td class="muted">{{ m.lesson or '' }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% endfor %}
+  <script>
+    document.querySelectorAll('.matchup-note').forEach((input) => {
+      let saved = input.value.trim();
+      const note = input.parentElement.querySelector('.saved');
+      input.addEventListener('blur', async () => {
+        const value = input.value.trim();
+        if (value === saved) return;
+        const resp = await fetch('/matchups/note', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ opponent_deck: input.dataset.opponent, note: value }),
+        });
+        if (!resp.ok) return;
+        saved = value;
+        note.textContent = 'Saved';
+        setTimeout(() => { note.textContent = ''; }, 1500);
+      });
+      input.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') input.blur(); });
+    });
+  </script>
+{% endblock %}

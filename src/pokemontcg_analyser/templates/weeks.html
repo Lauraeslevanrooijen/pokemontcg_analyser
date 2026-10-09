@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block title %}Weeks — Pokémon TCG Live analyser{% endblock %}
+{% block content %}
+  <h1>Weeks</h1>
+  {% if not weeks %}
+    <p class="muted">No matches logged yet.</p>
+  {% endif %}
+  {% for w in weeks %}
+    <div class="panel" style="margin-bottom: 20px;">
+      <h2 style="margin: 0 0 4px;">{{ w.monday.strftime('%-d %b') }} &ndash; {{ w.sunday.strftime('%-d %b %Y') }}</h2>
+      <p style="margin: 0 0 10px;">
+        <strong>{{ w.record.wins }}&ndash;{{ w.record.losses }}&ndash;{{ w.record.ties }}</strong>
+        <span class="muted">over {{ w.record.total }} {{ 'game' if w.record.total == 1 else 'games' }} &middot;</span>
+        {% for deck, r in w.decks.items() %}
+          <span class="muted">{{ deck }} {{ r.wins }}&ndash;{{ r.losses }}&ndash;{{ r.ties }}{{ ', ' if not loop.last else '' }}</span>
+        {% endfor %}
+      </p>
+      <p style="margin: 0 0 10px; display: flex; gap: 8px; flex-wrap: wrap;">
+        {% for key, name in labels.items() %}
+          {% if w.labels[key] %}<span class="chip label-{{ key }}">{{ w.labels[key] }} {{ name }}</span>{% endif %}
+        {% endfor %}
+      </p>
+      {% if w.lessons %}
+        <strong>Lessons</strong>
+        <ul style="margin: 4px 0 10px; padding-left: 20px;">
+          {% for m, lesson in w.lessons %}
+            <li>{{ lesson }} <a class="muted" href="/matches/{{ m.id }}">{{ m.deck }} vs {{ m.opponent_deck or '?' }}</a></li>
+          {% endfor %}
+        </ul>
+      {% else %}
+        <p class="muted" style="margin: 0 0 10px;">No lessons written down this week.</p>
+      {% endif %}
+      {% if w.misplays %}
+        <strong>Misplays</strong>
+        <ul style="margin: 4px 0 0; padding-left: 20px;">
+          {% for m, e in w.misplays %}
+            <li>
+              {{ e.detail or 'no text' }}
+              <a class="muted" href="/matches/{{ m.id }}{{ '?t=%.2f' % e.video_offset_seconds if e.video_offset_seconds is not none else '' }}">{{ m.deck }} vs {{ m.opponent_deck or '?' }}{% if e.log_turn %}, turn {{ e.log_turn }}{% endif %}</a>
+            </li>
+          {% endfor %}
+        </ul>
+      {% endif %}
+    </div>
+  {% endfor %}
+{% endblock %}
