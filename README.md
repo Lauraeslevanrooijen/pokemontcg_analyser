@@ -195,3 +195,27 @@ src/pokemontcg_analyser/
 packaging/      recipe and script for the standalone app and .dmg
 tests/
 ```
+
+## License
+
+Copyright (C) 2026 Laura van Rooijen
+
+This program is free software: you can redistribute it and/or modify it
+under the terms of the GNU General Public License, version 3, as published
+by the Free Software Foundation. It is distributed in the hope that it will
+be useful, but without any warranty. The full text is in [LICENSE](LICENSE).
+
+The packaged app (`.dmg`) also contains:
+
+- [FFmpeg](https://ffmpeg.org) 7.1, a build with GPL components, taken
+  unchanged from the [imageio-ffmpeg](https://github.com/imageio/imageio-ffmpeg)
+  package. FFmpeg is licensed under the GPL; its source code is at
+  <https://ffmpeg.org/download.html>.
+- Python and the libraries listed in `pyproject.toml`, each under its own
+  license.
+
+Card data and pictures are fetched from [TCGdex](https://tcgdex.dev).
+
+This is a fan-made tool. It is not affiliated with, endorsed by or
+sponsored by Nintendo, The Pokémon Company or the makers of Pokémon TCG
+Live. Pokémon and Pokémon TCG Live are trademarks of their owners.
