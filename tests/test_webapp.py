@@ -1054,7 +1054,7 @@ def test_misplay_words_and_recent_opponents(client: TestClient) -> None:
     assert "Words that keep coming back" not in client.get("/moments?label=good").text
 
     opponents = client.get("/opponents").text
-    meta = opponents[opponents.index("What you have been running into") : opponents.index("<h2>Per deck</h2>")]
+    meta = opponents[opponents.index("What you have been running into") : opponents.index("<h2>Per type of deck</h2>")]
     assert meta.index("Tauros") < meta.index("Alakazam")  # met most, listed first
     assert "67%" in meta
 
@@ -1094,3 +1094,52 @@ def test_move_a_comment_along_the_battle_log(client: TestClient) -> None:
     # a note on the video is not a log comment
     plain = client.post(f"/matches/{match_id}/notes", json={"text": "x", "offset_seconds": 1.0}).json()
     assert client.post(f"/events/{plain['id']}/move", json={"direction": 1}).status_code == 400
+
+
+def test_decks_of_one_type_count_together(client: TestClient) -> None:
+    storage.log_match(deck="Pult", opponent_deck="Dragapult ex", result="win")
+    storage.log_match(deck="Pult", opponent_deck="Dragapult ex / Dusclops", result="loss")
+    storage.log_match(deck="Pult", opponent_deck="Drakloak", result="loss")
+    storage.log_match(deck="Pult", opponent_deck="Alakazam", result="win")
+    client.put("/matchups/note", json={"opponent_deck": "Dragapult ex", "note": "get Drakloak early"})
+
+    for name in ("Dragapult ex", "Dragapult ex / Dusclops", "Drakloak"):
+        assert client.put("/deck-types", json={"deck": name, "type": "Dragapult"}).status_code == 200
+
+    page = client.get("/opponents").text
+    panel = page[page.index('<h2 style="margin: 0 0 4px;">Dragapult</h2>') :]
+    panel = panel[: panel.index('<div class="panel"', 10)]
+    assert "1&ndash;2&ndash;0" in panel  # the three variants together
+    for name in ("Dragapult ex", "Dragapult ex / Dusclops", "Drakloak"):
+        assert name in panel
+    # the note written for one of the names is the type's note now
+    assert "get Drakloak early" in panel
+    meta = page[page.index("What you have been running into") : page.index("<h2>Per type of deck</h2>")]
+    assert "Dragapult" in meta and "75%" in meta and "Drakloak" not in meta
+
+    stats = client.get("/stats").text
+    matchups = stats[stats.index("<h2>By matchup</h2>") : stats.index("<h2>Going first or second</h2>")]
+    assert "Pult vs Dragapult" in matchups and "Pult vs Drakloak" not in matchups
+
+    # on a match against a variant, the note field is the type's
+    variant = next(m for m in storage.list_matches() if m.opponent_deck == "Drakloak")
+    match_page = client.get(f"/matches/{variant.id}").text
+    assert "Against Dragapult:" in match_page and "get Drakloak early" in match_page
+
+    # taking one out again
+    client.put("/deck-types", json={"deck": "Drakloak", "type": ""})
+    assert storage.deck_types() == {"Dragapult ex": "Dragapult", "Dragapult ex / Dusclops": "Dragapult"}
+    assert '<h2 style="margin: 0 0 4px;">Drakloak</h2>' in client.get("/opponents").text
+
+
+def test_my_own_decks_can_share_a_type(client: TestClient) -> None:
+    storage.log_match(deck="Pult hammer", result="win")
+    storage.log_match(deck="Pult hammer 2", result="loss")
+    client.put("/deck-types", json={"deck": "Pult hammer", "type": "Pult"})
+    client.put("/deck-types", json={"deck": "Pult hammer 2", "type": "Pult"})
+
+    stats = client.get("/stats").text
+    by_deck = stats[stats.index("<h2>By deck</h2>") : stats.index("<h2>By matchup</h2>")]
+
+    assert "<td>Pult</td>" in by_deck and "Pult hammer" not in by_deck
+    assert 'value="Pult"' in client.get("/decks").text

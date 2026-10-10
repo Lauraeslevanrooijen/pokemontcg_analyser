@@ -4,7 +4,7 @@
   <h1>Opponents</h1>
   {% if meta %}
     <h2>What you have been running into</h2>
-    <p class="muted">The decks you met in the last four weeks, most often first.</p>
+    <p class="muted">The types of deck you met in the last four weeks, most often first.</p>
     <table>
       <thead><tr><th>Deck</th><th class="num">Met</th><th class="num">Share</th><th class="num">W&ndash;L&ndash;T</th><th></th></tr></thead>
       <tbody>
@@ -19,7 +19,11 @@
         {% endfor %}
       </tbody>
     </table>
-    <h2>Per deck</h2>
+    <h2>Per type of deck</h2>
+    <p class="muted">
+      Decks that are really the same deck can be put under one type: fill in the type's name under "Same type
+      as". They then count together here and on the Stats page.
+    </p>
   {% endif %}
   {% if not opponents %}
     <p class="muted">No matches against a named deck yet.</p>
@@ -27,6 +31,16 @@
   {% for o in opponents %}
     <div class="panel" style="margin-bottom: 20px;">
       <h2 style="margin: 0 0 4px;">{{ o.name }}</h2>
+      {% if o.grouped %}
+        <p style="margin: 0 0 8px; display: flex; gap: 6px; flex-wrap: wrap; align-items: center;">
+          <span class="muted" style="font-size: 0.85em;">Includes</span>
+          {% for name in o.names %}
+            <span class="chip">{{ name }}
+              <button type="button" class="ungroup" data-deck="{{ name }}" title="Take {{ name }} out of this type">&times;</button>
+            </span>
+          {% endfor %}
+        </p>
+      {% endif %}
       <p style="margin: 0 0 10px;">
         {{ o.record.wins }}&ndash;{{ o.record.losses }}&ndash;{{ o.record.ties }}
         <span class="muted">({{ '%.0f%%' % (o.record.win_rate * 100) }} over {{ o.record.total }} {{ 'game' if o.record.total == 1 else 'games' }})</span>
@@ -35,6 +49,12 @@
         <input class="matchup-note" data-opponent="{{ o.name }}" value="{{ o.note }}" autocomplete="off" style="flex: 1;"
                placeholder="What to remember against this deck">
         <span class="muted saved" style="font-size: 0.85em; min-width: 3em;"></span>
+      </div>
+      <div style="display: flex; gap: 8px; align-items: center; margin-top: 8px;">
+        <label class="muted" style="font-size: 0.85em;">Same type as</label>
+        <input class="same-type" list="type-names" data-decks='{{ o.names|tojson }}' data-current="{{ o.name }}" autocomplete="off"
+               placeholder="another deck here, or a new name such as Dragapult" style="flex: 1; max-width: 360px;">
+        <button type="button" class="secondary same-type-save" style="padding: 4px 12px;">Group</button>
       </div>
       {% if o.cards %}
         <p class="muted" style="margin: 12px 0 4px; font-size: 0.9em;">
@@ -58,7 +78,37 @@
       </table>
     </div>
   {% endfor %}
+  <datalist id="type-names">{% for name in type_names %}<option value="{{ name }}">{% endfor %}</datalist>
+  <style>
+    .chip .ungroup { background: transparent; border: none; color: inherit; padding: 0 0 0 4px; font-weight: 400; cursor: pointer; }
+  </style>
   <script>
+    async function setType(deck, type) {
+      const resp = await fetch('/deck-types', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ deck, type }),
+      });
+      return resp.ok;
+    }
+    // "Same type as": every name in this panel goes under the given type.
+    document.querySelectorAll('.same-type-save').forEach((button) => {
+      const input = button.parentElement.querySelector('.same-type');
+      const group = async () => {
+        const type = input.value.trim();
+        if (!type || type === input.dataset.current) return;
+        for (const deck of JSON.parse(input.dataset.decks)) await setType(deck, type);
+        location.reload();
+      };
+      button.addEventListener('click', group);
+      input.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') group(); });
+    });
+    document.querySelectorAll('.ungroup').forEach((button) => {
+      button.addEventListener('click', async () => {
+        if (await setType(button.dataset.deck, '')) location.reload();
+      });
+    });
+
     document.querySelectorAll('.matchup-note').forEach((input) => {
       let saved = input.value.trim();
       const note = input.parentElement.querySelector('.saved');

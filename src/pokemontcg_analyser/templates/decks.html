@@ -74,6 +74,12 @@
   {% for d in decks %}
     <div class="panel" style="margin-bottom: 24px;">
       <h2 style="margin: 0 0 4px;">{{ d.name }}</h2>
+      <p style="margin: 0 0 8px; display: flex; gap: 8px; align-items: center;">
+        <label class="muted" style="font-size: 0.85em;">Type</label>
+        <input class="deck-type" data-deck="{{ d.name }}" value="{{ d.type }}" autocomplete="off" style="max-width: 280px;"
+               placeholder="same as its name; give variants one type">
+        <span class="muted saved" style="font-size: 0.85em;"></span>
+      </p>
       <p style="margin: 0 0 12px;">{{ record(d.overall) }}</p>
 
       {% if d.versions %}
@@ -193,4 +199,26 @@
     <strong>Add a deck</strong>
     {{ version_form('', '') }}
   </div>
+  <script>
+    // Variants of one deck ("Pult hammer", "Pult hammer 2") can share a
+    // type, and then count as one deck on the Stats page.
+    document.querySelectorAll('.deck-type').forEach((input) => {
+      let saved = input.value.trim();
+      input.addEventListener('blur', async () => {
+        const value = input.value.trim();
+        if (value === saved) return;
+        const resp = await fetch('/deck-types', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ deck: input.dataset.deck, type: value }),
+        });
+        if (!resp.ok) return;
+        saved = value;
+        const note = input.parentElement.querySelector('.saved');
+        note.textContent = 'Saved';
+        setTimeout(() => { note.textContent = ''; }, 1500);
+      });
+      input.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') input.blur(); });
+    });
+  </script>
 {% endblock %}

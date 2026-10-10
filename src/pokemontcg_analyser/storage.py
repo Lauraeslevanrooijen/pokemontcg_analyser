@@ -49,6 +49,11 @@ CREATE TABLE IF NOT EXISTS settings (
     value TEXT
 );
 
+CREATE TABLE IF NOT EXISTS deck_types (
+    deck TEXT PRIMARY KEY,
+    type TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS matchup_notes (
     opponent_deck TEXT PRIMARY KEY,
     note TEXT NOT NULL
@@ -293,6 +298,28 @@ def set_setting(key: str, value: str | None, db_path: Path | None = None) -> Non
             "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
             (key, value),
         )
+
+
+def deck_types(db_path: Path | None = None) -> dict[str, str]:
+    """Which type each deck name was put under: "Dragapult ex / Dusclops"
+    and "Drakloak" both under "Dragapult", say. Names not in here are a
+    type of their own."""
+    with connect(db_path) as conn:
+        rows = conn.execute("SELECT * FROM deck_types ORDER BY deck").fetchall()
+        return {row["deck"]: row["type"] for row in rows}
+
+
+def set_deck_type(deck: str, deck_type: str | None, db_path: Path | None = None) -> None:
+    """Put a deck name under a type; None (or its own name) takes it out."""
+    with connect(db_path) as conn:
+        if deck_type and deck_type != deck:
+            conn.execute(
+                "INSERT INTO deck_types (deck, type) VALUES (?, ?) "
+                "ON CONFLICT(deck) DO UPDATE SET type = excluded.type",
+                (deck, deck_type),
+            )
+        else:
+            conn.execute("DELETE FROM deck_types WHERE deck = ?", (deck,))
 
 
 def matchup_notes(db_path: Path | None = None) -> dict[str, str]:

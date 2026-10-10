@@ -66,8 +66,10 @@ Early scaffold. Working today:
   how many of your turns pass without an Energy or an attack; the Decks
   page compares those per version of a list and gives the opening-hand odds
   of the current list.
-- Opponents page: per deck played against, your record, your note, and
-  what they played. Weeks page: each week's record, lessons and misplays.
+- Opponents page: per type of deck played against, your record, your
+  note, and what they played. Deck names that are really the same deck can
+  be put under one type (on the Opponents and Decks pages) and then count
+  together in the stats. Weeks page: each week's record, lessons and misplays.
 - A match can be downloaded as a text file with its log, notes and lesson.
 - Records on the Stats page (fastest win, biggest comeback, longest
   streak, most played card); games won from two or more Prize cards behind

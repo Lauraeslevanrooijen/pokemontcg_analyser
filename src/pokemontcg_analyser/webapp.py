@@ -9,6 +9,7 @@ data/matches.db or source over HTTP.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import os
 import queue
@@ -439,12 +440,15 @@ def stats(request: Request):
         request,
         "stats.html",
         {
-            "stats": insights.build(matches, events),
+            # per type of deck: variants put under one type count together
+            "stats": insights.build(_by_type(matches), events),
             "labels": storage.LABELS,
             "openings": insights.openings(hands),
             "mulligans": mulligans,
             "tempo": insights.tempo(matches, events),
-            "lengths": insights.game_lengths(lengths),
+            "lengths": insights.game_lengths(
+                [(typed, turns) for typed, (_, turns) in zip(_by_type([m for m, _ in lengths]), lengths)]
+            ),
             "logs": insights.summarise_logs(_deck_log_facts(matches)),
             "records": _records(matches, lengths),
             "swing_counts": {
@@ -513,6 +517,7 @@ def decks_page(request: Request, add: str = ""):
         deck_views.append(
             {
                 "name": name,
+                "type": storage.deck_types(db_path=db_path()).get(name, ""),
                 "overall": overall,
                 "unversioned": unversioned,
                 "versions": list(reversed(rows)),  # newest first
@@ -571,19 +576,66 @@ def save_deck_version(
     return RedirectResponse("/decks", status_code=303)
 
 
+def _by_type(matches: list[storage.Match]) -> list[storage.Match]:
+    """The same matches with every deck name replaced by its type, so that
+    counting per deck counts variants of one deck together."""
+    types = storage.deck_types(db_path=db_path())
+    return [
+        dataclasses.replace(
+            m,
+            deck=types.get(m.deck, m.deck),
+            opponent_deck=types.get(m.opponent_deck, m.opponent_deck) if m.opponent_deck else None,
+        )
+        for m in matches
+    ]
+
+
+def _matchup_note(opponent_deck: str | None) -> str:
+    """The note for a deck: its type's, or else one written earlier for
+    this name or another name of the same type."""
+    if not opponent_deck:
+        return ""
+    types = storage.deck_types(db_path=db_path())
+    notes = storage.matchup_notes(db_path=db_path())
+    deck_type = types.get(opponent_deck, opponent_deck)
+    if deck_type in notes:
+        return notes[deck_type]
+    if opponent_deck in notes:
+        return notes[opponent_deck]
+    return next((notes[name] for name, t in types.items() if t == deck_type and name in notes), "")
+
+
+class DeckTypeIn(BaseModel):
+    deck: str
+    type: str = ""
+
+
+@app.put("/deck-types")
+def set_deck_type(body: DeckTypeIn):
+    """Put a deck name under a type, or take it out with an empty type."""
+    deck = body.deck.strip()
+    if not deck:
+        raise HTTPException(status_code=400, detail="Which deck?")
+    storage.set_deck_type(deck, body.type.strip() or None, db_path=db_path())
+    return {"deck": deck, "type": body.type.strip() or deck}
+
+
 @app.get("/opponents")
 def opponents(request: Request):
-    """Everything known about each deck played against, in one place."""
+    """Everything known about each type of deck played against."""
     matches = storage.list_matches(db_path=db_path())
-    notes = storage.matchup_notes(db_path=db_path())
-    by_deck: dict[str, dict] = {}
+    types = storage.deck_types(db_path=db_path())
+    by_type: dict[str, dict] = {}
     for match in matches:  # newest first
         if not match.opponent_deck:
             continue
-        entry = by_deck.setdefault(
-            match.opponent_deck,
-            {"name": match.opponent_deck, "record": insights.Record(), "matches": [], "cards": {}, "logged": 0},
+        deck_type = types.get(match.opponent_deck, match.opponent_deck)
+        entry = by_type.setdefault(
+            deck_type,
+            {"name": deck_type, "names": [], "record": insights.Record(), "matches": [], "cards": {}, "logged": 0},
         )
+        if match.opponent_deck not in entry["names"]:
+            entry["names"].append(match.opponent_deck)
         entry["record"].add(match.result)
         entry["matches"].append(match)
         if match.battle_log:
@@ -592,22 +644,30 @@ def opponents(request: Request):
             for card in log.cards_played(log.opponent):
                 entry["cards"][card] = entry["cards"].get(card, 0) + 1
     views = []
-    for entry in by_deck.values():
-        entry["note"] = notes.get(entry["name"], "")
+    for entry in by_type.values():
+        entry["note"] = _matchup_note(entry["names"][0])
+        entry["names"].sort(key=str.lower)
+        # a type that is just one deck under its own name has nothing to show as grouped
+        entry["grouped"] = entry["names"] != [entry["name"]]
         entry["cards"] = sorted(entry["cards"].items(), key=lambda item: (-item[1], item[0]))
         views.append(entry)
     views.sort(key=lambda e: (-e["record"].total, e["name"].lower()))
-    # What has been going around lately: the decks met in the last four weeks.
+    # What has been going around lately: the types met in the last four weeks.
     since = (datetime.now(timezone.utc) - timedelta(weeks=4)).isoformat()
     recent: dict[str, insights.Record] = {}
-    for match in matches:
+    for match in _by_type(matches):
         if match.opponent_deck and match.played_at_utc >= since:
             recent.setdefault(match.opponent_deck, insights.Record()).add(match.result)
     meta = sorted(recent.items(), key=lambda item: (-item[1].total, item[0].lower()))
     return templates.TemplateResponse(
         request,
         "opponents.html",
-        {"opponents": views, "meta": meta, "meta_games": sum(r.total for _, r in meta)},
+        {
+            "opponents": views,
+            "meta": meta,
+            "meta_games": sum(r.total for _, r in meta),
+            "type_names": sorted({e["name"] for e in views}, key=str.lower),
+        },
     )
 
 
@@ -915,7 +975,10 @@ def match_detail(request: Request, match_id: int):
             "battle_log": _battle_log_json(match.battle_log, match),
             "detecting_turns": match_id in _detecting,
             "log_times": json.loads(match.log_times) if match.log_times else {},
-            "matchup_note": storage.matchup_notes(db_path=db_path()).get(match.opponent_deck or "", ""),
+            "matchup_note": _matchup_note(match.opponent_deck),
+            "opponent_type": storage.deck_types(db_path=db_path()).get(
+                match.opponent_deck or "", match.opponent_deck
+            ),
             "known_decks": sorted(
                 {
                     d

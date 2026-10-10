@@ -171,7 +171,7 @@
 
   <div class="match-meta">
     {% if match.opponent_deck %}
-      <label class="muted" for="matchup-note">Against {{ match.opponent_deck }}:</label>
+      <label class="muted" for="matchup-note">Against {{ opponent_type }}:</label>
       <input id="matchup-note" value="{{ matchup_note }}" autocomplete="off"
              placeholder="What to remember against this deck, for every game against it">
       <span id="matchup-saved" class="muted" style="font-size: 0.85em;"></span>
@@ -914,7 +914,7 @@
     const matchupInput = document.getElementById('matchup-note');
     if (matchupInput) {
       autosave(matchupInput, document.getElementById('matchup-saved'), (note) =>
-        api('PUT', '/matchups/note', { opponent_deck: {{ (match.opponent_deck or '')|tojson }}, note }));
+        api('PUT', '/matchups/note', { opponent_deck: {{ (opponent_type or '')|tojson }}, note }));
     }
 
     document.getElementById('edit-match-form').addEventListener('submit', async (ev) => {
