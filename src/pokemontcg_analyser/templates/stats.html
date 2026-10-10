@@ -61,6 +61,81 @@
       </tbody>
     </table>
 
+    <h2>By opponent's deck</h2>
+    <table>
+      {{ record_head("Opponent's deck") }}
+      <tbody>
+        {% for name, r in against %}
+          <tr>
+            <td>
+              {{ name }}
+              {% if name in type_members %}
+                <div class="muted" style="font-size: 0.85em;">{{ type_members[name]|join(', ') }}</div>
+              {% endif %}
+            </td>
+            <td class="num">{{ r.total }}</td>
+            <td class="num">{{ r.wins }}&ndash;{{ r.losses }}&ndash;{{ r.ties }}</td>
+            <td class="num">{{ '%.0f%%' % (r.win_rate * 100) }}</td>
+            <td style="width: 30%;"><span class="bar" style="width: {{ '%.0f' % (r.win_rate * 100) }}%;"></span></td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+
+    <details id="group-decks">
+      <summary>Group decks that are the same deck</summary>
+      <p class="muted" style="margin: 8px 0;">
+        Give decks that are really the same deck the same type, for example "Dragapult" for "Dragapult ex",
+        "Dragapult ex / Dusclops" and "Drakloak". They then count as one deck in all the tables on this page.
+        Empty means the deck is a type of its own.
+      </p>
+      <table>
+        <thead><tr><th>Deck</th><th class="num">Games</th><th>Type</th><th></th></tr></thead>
+        <tbody>
+          {% for d in deck_names %}
+            <tr>
+              <td>{{ d.name }} {% if d.mine %}<span class="muted">(yours)</span>{% endif %}</td>
+              <td class="num">{{ d.games }}</td>
+              <td><input class="deck-type" list="type-names" data-deck="{{ d.name }}" value="{{ d.type }}" autocomplete="off"
+                         placeholder="{{ d.name }}" style="width: 100%; max-width: 320px;"></td>
+              <td class="muted saved" style="width: 5em; font-size: 0.85em;"></td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      <datalist id="type-names">{% for name in type_names %}<option value="{{ name }}">{% endfor %}</datalist>
+      <p><button type="button" class="secondary" onclick="sessionStorage.setItem('group-decks-open', '1'); location.reload()">Show the stats with these types</button></p>
+    </details>
+    <script>
+      // Types are saved as each field is left; the tables above are redrawn
+      // on request, so a whole run of decks can be typed in first.
+      const grouping = document.getElementById('group-decks');
+      try {
+        if (sessionStorage.getItem('group-decks-open')) {
+          sessionStorage.removeItem('group-decks-open');
+          grouping.open = true;
+        }
+      } catch (err) {}
+      grouping.querySelectorAll('.deck-type').forEach((input) => {
+        let saved = input.value.trim();
+        input.addEventListener('blur', async () => {
+          const value = input.value.trim();
+          if (value === saved) return;
+          const resp = await fetch('/deck-types', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ deck: input.dataset.deck, type: value }),
+          });
+          if (!resp.ok) return;
+          saved = value;
+          const note = input.closest('tr').querySelector('.saved');
+          note.textContent = 'Saved';
+          setTimeout(() => { note.textContent = ''; }, 1500);
+        });
+        input.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') input.blur(); });
+      });
+    </script>
+
     <h2>Going first or second</h2>
     <table>
       {{ record_head('I went') }}

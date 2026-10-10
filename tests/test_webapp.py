@@ -1143,3 +1143,26 @@ def test_my_own_decks_can_share_a_type(client: TestClient) -> None:
 
     assert "<td>Pult</td>" in by_deck and "Pult hammer" not in by_deck
     assert 'value="Pult"' in client.get("/decks").text
+
+
+def test_stats_page_shows_record_per_opponent_type_and_lets_you_group(client: TestClient) -> None:
+    storage.log_match(deck="Pult", opponent_deck="Dragapult ex", result="win")
+    storage.log_match(deck="Pult", opponent_deck="Drakloak", result="loss")
+    storage.log_match(deck="Pult", opponent_deck="Alakazam", result="win")
+
+    page = client.get("/stats").text
+    against = page[page.index("<h2>By opponent's deck</h2>") : page.index('<details id="group-decks">')]
+    assert "Dragapult ex" in against and "Drakloak" in against
+    editor = page[page.index('<details id="group-decks">') : page.index("<h2>Going first or second</h2>")]
+    for name in ("Dragapult ex", "Drakloak", "Alakazam", "Pult"):
+        assert f'data-deck="{name}"' in editor
+
+    client.put("/deck-types", json={"deck": "Dragapult ex", "type": "Dragapult"})
+    client.put("/deck-types", json={"deck": "Drakloak", "type": "Dragapult"})
+
+    page = client.get("/stats").text
+    against = page[page.index("<h2>By opponent's deck</h2>") : page.index('<details id="group-decks">')]
+    row = against[against.index("Dragapult") :]
+    assert "Dragapult ex, Drakloak" in row  # what the type holds
+    assert "1&ndash;1&ndash;0" in row
+    assert against.count("<tr>") == 3  # header, Dragapult, Alakazam

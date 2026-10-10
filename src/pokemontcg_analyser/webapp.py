@@ -451,6 +451,7 @@ def stats(request: Request):
             ),
             "logs": insights.summarise_logs(_deck_log_facts(matches)),
             "records": _records(matches, lengths),
+            **_type_overview(matches),
             "swing_counts": {
                 kind: sum(1 for k, _ in _swings(matches).values() if k == kind)
                 for kind in ("comeback", "lead lost")
@@ -588,6 +589,31 @@ def _by_type(matches: list[storage.Match]) -> list[storage.Match]:
         )
         for m in matches
     ]
+
+
+def _type_overview(matches: list[storage.Match]) -> dict:
+    """For the Stats page: the record against each type of opponent deck,
+    and every deck name with the type it is under, for grouping them."""
+    types = storage.deck_types(db_path=db_path())
+    against: dict[str, insights.Record] = {}
+    members: dict[str, set[str]] = {}
+    names: dict[str, dict] = {}
+    for match in matches:
+        for name, mine in ((match.deck, True), (match.opponent_deck, False)):
+            if name:
+                entry = names.setdefault(name, {"name": name, "type": types.get(name, ""), "games": 0, "mine": mine})
+                entry["games"] += 1
+        if match.opponent_deck:
+            deck_type = types.get(match.opponent_deck, match.opponent_deck)
+            against.setdefault(deck_type, insights.Record()).add(match.result)
+            members.setdefault(deck_type, set()).add(match.opponent_deck)
+    return {
+        "against": sorted(against.items(), key=lambda item: (-item[1].total, item[0].lower())),
+        # the names under a type, shown when it holds more than its own name
+        "type_members": {t: sorted(n, key=str.lower) for t, n in members.items() if n != {t}},
+        "deck_names": sorted(names.values(), key=lambda e: (e["mine"], e["name"].lower())),
+        "type_names": sorted({types.get(n, n) for n in names}, key=str.lower),
+    }
 
 
 def _matchup_note(opponent_deck: str | None) -> str:
