@@ -162,42 +162,46 @@ function run(argv) {
 Crop = tuple[float, float, float, float]  # x, y, width, height as fractions of the screen
 
 
-def fit_game_area(display: tuple[float, float], window: tuple[float, float, float, float]) -> Crop | None:
-    """Where the game picture sits on the main display, given its window.
+def window_area(display: tuple[float, float], window: tuple[float, float, float, float]) -> Crop | None:
+    """A window as the part of the main display to record, or None when it
+    is no use as one: too small to be the game being played (the app also
+    owns thin bar windows, and under Stage Manager a parked game is a
+    thumbnail), off the display, or as good as the whole screen anyway.
 
-    The game always draws 16:9, centred in its window with black bars for
-    the rest (measured fullscreen on a 1710x1107 display: picture at
-    y=174..2099 of 2214 pixels, this predicts 179..2103). Returns None when
-    cropping would gain nothing or the window isn't on the main display.
+    The whole window is taken, not a guess at where in it the picture is.
+    An earlier version assumed a centred 16:9 picture, which holds for a
+    fullscreen game but not for one in a window: there the game fills the
+    window, and the recording came out cut into. Finding the playing field
+    in whatever was recorded is left to the analysis (turns.find_layout).
     """
     display_w, display_h = display
     x, y, w, h = window
-    picture_w = min(w, h * 16 / 9)
-    picture_h = picture_w * 9 / 16
-    left = x + (w - picture_w) / 2
-    top = y + (h - picture_h) / 2
-    if left < 0 or top < 0 or left + picture_w > display_w or top + picture_h > display_h:
+    left, top = max(0.0, x), max(0.0, y)
+    right, bottom = min(display_w, x + w), min(display_h, y + h)
+    w, h = right - left, bottom - top
+    if w < 0.5 * display_w or h < 0.5 * display_h:
         return None
-    if picture_w * picture_h > 0.98 * display_w * display_h:
+    if w * h > 0.98 * display_w * display_h:
         return None
-    return (left / display_w, top / display_h, picture_w / display_w, picture_h / display_h)
+    return (left / display_w, top / display_h, w / display_w, h / display_h)
 
 
 def game_crop(app_name: str = GAME_APP_NAME) -> Crop | None:
-    """The part of the main display showing the game, or None if the game
-    isn't open (or anything about asking goes wrong — then record it all)."""
+    """The part of the main display showing the game, or None if there is
+    no game window to go by (or anything about asking goes wrong) — then
+    the whole screen is recorded."""
     try:
         result = subprocess.run(
             ["osascript", "-l", "JavaScript", "-e", _WINDOW_SCRIPT, app_name],
             capture_output=True, text=True, timeout=5, check=True,
         )
         info = json.loads(result.stdout)
-        windows = [(b["X"], b["Y"], b["Width"], b["Height"]) for b in info["windows"]]
-        if not windows:
-            return None
-        # The game window is the big one; the app also owns thin bar windows.
-        window = max(windows, key=lambda b: b[2] * b[3])
-        return fit_game_area(tuple(info["display"]), window)
+        display = tuple(info["display"])
+        areas = [
+            window_area(display, (b["X"], b["Y"], b["Width"], b["Height"])) for b in info["windows"]
+        ]
+        usable = [area for area in areas if area is not None]
+        return max(usable, key=lambda area: area[2] * area[3]) if usable else None
     except (OSError, subprocess.SubprocessError, ValueError, KeyError, TypeError):
         return None
 

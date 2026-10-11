@@ -123,25 +123,26 @@ def test_build_ffmpeg_command_with_microphone(tmp_path) -> None:
     assert voiced[voiced.index("-c:a") + 1] == "aac"
 
 
-def test_fit_game_area_letterboxes_a_fullscreen_window() -> None:
+def test_window_area_takes_the_whole_window() -> None:
     # fullscreen below the notch on a 1710x1107 display
-    x, y, w, h = recorder.fit_game_area((1710, 1107), (0, 34, 1710, 1073))
-
+    x, y, w, h = recorder.window_area((1710, 1107), (0, 34, 1710, 1073))
     assert (x, w) == (0, 1)
-    assert round(y * 2214) == 179  # measured in a real capture: 174
-    assert round(h * 2214) == 1924
+    assert round(y * 1107) == 34 and round(h * 1107) == 1073
+
+    # a window in the middle of the screen, as under Stage Manager
+    x, y, w, h = recorder.window_area((1710, 1107), (150, 60, 1400, 900))
+    assert (round(x * 1710), round(y * 1107), round(w * 1710), round(h * 1107)) == (150, 60, 1400, 900)
+
+    # partly off the display: what is on it
+    x, y, w, h = recorder.window_area((1710, 1107), (-100, 60, 1400, 900))
+    assert (round(x * 1710), round(w * 1710)) == (0, 1300)
 
 
-def test_fit_game_area_pillarboxes_a_wide_window() -> None:
-    x, y, w, h = recorder.fit_game_area((2000, 1000), (0, 100, 2000, 450))
-
-    assert round(w * 2000) == 800 and round(h * 1000) == 450
-    assert round(x * 2000) == 600 and round(y * 1000) == 100
-
-
-def test_fit_game_area_gives_up_when_off_screen_or_pointless() -> None:
-    assert recorder.fit_game_area((1710, 1107), (1710, 0, 1920, 1080)) is None  # other display
-    assert recorder.fit_game_area((1920, 1080), (0, 0, 1920, 1080)) is None  # nothing to cut
+def test_window_area_ignores_windows_that_cannot_be_the_game() -> None:
+    assert recorder.window_area((1710, 1107), (1782, 490, 199, 161)) is None  # a parked thumbnail
+    assert recorder.window_area((1710, 1107), (0, 0, 1710, 34)) is None  # a bar
+    assert recorder.window_area((1710, 1107), (1710, 0, 1920, 1080)) is None  # other display
+    assert recorder.window_area((1920, 1080), (0, 0, 1920, 1080)) is None  # nothing to cut
 
 
 def test_build_ffmpeg_command_crops_before_scaling(tmp_path) -> None:
