@@ -22,7 +22,7 @@ analysis = Analysis(
         (str(staging / "ptcg-capture"), "pokemontcg_analyser/bin"),
     ],
     hiddenimports=["pokemontcg_analyser.webapp", "uvicorn.logging", "uvicorn.loops.auto",
-                   "uvicorn.protocols.http.auto", "uvicorn.lifespan.on"],
+                   "uvicorn.protocols.http.auto", "uvicorn.lifespan.on", "AppKit"],
     # The speech model and its libraries would add several hundred MB; the
     # packaged app leaves spoken notes untranscribed instead.
     excludes=["faster_whisper", "ctranslate2", "onnxruntime", "tokenizers", "huggingface_hub",

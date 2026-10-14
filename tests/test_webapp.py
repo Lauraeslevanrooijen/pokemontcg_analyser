@@ -1,5 +1,4 @@
 from datetime import datetime, timezone
-import subprocess
 from pathlib import Path
 
 import pytest
@@ -1200,16 +1199,15 @@ def test_clipboard_is_read_for_this_computer_only(
 ) -> None:
     calls = []
 
-    def fake_run(command, **kwargs):
-        calls.append((command, kwargs))
-        return subprocess.CompletedProcess(command, 0, stdout="Brock’s Turn – Poké Pad".encode())
+    def fake_clipboard() -> str:
+        calls.append(True)
+        return "Brock’s Turn – Poké Pad"
 
-    monkeypatch.setattr(webapp.subprocess, "run", fake_run)
+    monkeypatch.setattr(webapp, "clipboard_text", fake_clipboard)
 
     response = client.get("/clipboard", headers={"host": "127.0.0.1:8642"})
     assert response.status_code == 200
     assert response.text == "Brock’s Turn – Poké Pad"
-    assert calls[0][1]["env"]["LANG"] == "en_US.UTF-8"
 
     assert client.get("/clipboard", headers={"host": "evil.example"}).status_code == 403
     assert len(calls) == 1

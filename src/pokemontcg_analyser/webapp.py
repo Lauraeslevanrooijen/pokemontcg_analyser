@@ -917,6 +917,30 @@ def open_screen_recording_settings():
     return RedirectResponse("/", status_code=303)
 
 
+def clipboard_text() -> str:
+    """The clipboard as text, asked of macOS itself.
+
+    pbpaste is only the fallback: what it gives for accented letters
+    (Poké Ball, Brock’s) depends on the locale it runs in.
+    """
+    try:
+        from AppKit import NSPasteboard, NSPasteboardTypeString
+
+        return NSPasteboard.generalPasteboard().stringForType_(NSPasteboardTypeString) or ""
+    except ImportError:
+        pass
+    try:
+        result = subprocess.run(
+            ["/usr/bin/pbpaste"],
+            capture_output=True,
+            timeout=5,
+            env={**os.environ, "LANG": "en_US.UTF-8", "LC_ALL": "en_US.UTF-8"},
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        raise HTTPException(status_code=503, detail="Could not read the clipboard")
+    return result.stdout.decode("utf-8", errors="replace")
+
+
 @app.get("/clipboard")
 def read_clipboard(request: Request):
     """The text on the macOS clipboard.
@@ -929,18 +953,8 @@ def read_clipboard(request: Request):
     host = (request.headers.get("host") or "").rsplit(":", 1)[0]
     if host not in ("127.0.0.1", "localhost"):
         raise HTTPException(status_code=403)
-    try:
-        # pbpaste mangles accented letters (Poké Ball, Brock's) without a UTF-8 locale
-        result = subprocess.run(
-            ["/usr/bin/pbpaste"],
-            capture_output=True,
-            timeout=5,
-            env={**os.environ, "LANG": "en_US.UTF-8", "LC_ALL": "en_US.UTF-8"},
-        )
-    except (OSError, subprocess.TimeoutExpired):
-        raise HTTPException(status_code=503, detail="Could not read the clipboard")
     return Response(
-        result.stdout.decode("utf-8", errors="replace"),
+        clipboard_text(),
         media_type="text/plain; charset=utf-8",
         headers={"Cache-Control": "no-store"},
     )
