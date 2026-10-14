@@ -279,7 +279,7 @@
         logPaste.blur();
         let text;
         try {
-          text = await navigator.clipboard.readText();
+          text = await readClipboard();
         } catch (err) {
           // no permission to read the clipboard: fall back to pasting by hand
           document.getElementById('log-details').open = true;

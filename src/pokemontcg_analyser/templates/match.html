@@ -928,7 +928,7 @@
 
     async function pasteFromClipboard(textarea) {
       try {
-        textarea.value = await navigator.clipboard.readText();
+        textarea.value = await readClipboard();
       } catch (err) {
         alert('Could not read the clipboard. Click in the field and paste with Cmd+V instead.');
       }

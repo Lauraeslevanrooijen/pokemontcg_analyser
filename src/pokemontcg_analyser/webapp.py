@@ -917,6 +917,35 @@ def open_screen_recording_settings():
     return RedirectResponse("/", status_code=303)
 
 
+@app.get("/clipboard")
+def read_clipboard(request: Request):
+    """The text on the macOS clipboard.
+
+    The desktop app's window does not let a page read the clipboard itself,
+    so the paste buttons ask for it here. Only answered for this computer:
+    another site can not read the answer (no CORS headers), and the host
+    check stops a site that points its own name at 127.0.0.1.
+    """
+    host = (request.headers.get("host") or "").rsplit(":", 1)[0]
+    if host not in ("127.0.0.1", "localhost"):
+        raise HTTPException(status_code=403)
+    try:
+        # pbpaste mangles accented letters (Poké Ball, Brock's) without a UTF-8 locale
+        result = subprocess.run(
+            ["/usr/bin/pbpaste"],
+            capture_output=True,
+            timeout=5,
+            env={**os.environ, "LANG": "en_US.UTF-8", "LC_ALL": "en_US.UTF-8"},
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        raise HTTPException(status_code=503, detail="Could not read the clipboard")
+    return Response(
+        result.stdout.decode("utf-8", errors="replace"),
+        media_type="text/plain; charset=utf-8",
+        headers={"Cache-Control": "no-store"},
+    )
+
+
 @app.post("/recording/mark")
 def mark_recording():
     recording = active_recording()

@@ -106,6 +106,17 @@
     {% block content %}{% endblock %}
   </main>
   <script>
+    // The desktop app's window refuses navigator.clipboard, so ask the
+    // server (which runs on this Mac) first and only fall back to the browser.
+    async function readClipboard() {
+      try {
+        const response = await fetch('/clipboard', {cache: 'no-store'});
+        if (response.ok) return await response.text();
+      } catch (err) {}
+      return await navigator.clipboard.readText();
+    }
+  </script>
+  <script>
     // Some buttons start work that takes a few seconds before the page
     // comes back (starting the recorder, finishing the video file). Show
     // that it was heard: the button says what is happening and can't be

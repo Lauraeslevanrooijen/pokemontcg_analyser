@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -1192,3 +1193,23 @@ def test_a_second_start_while_one_is_starting_is_refused(
     release.set()
     first.join()
     assert started == [3]  # only one recorder was ever started
+
+
+def test_clipboard_is_read_for_this_computer_only(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls = []
+
+    def fake_run(command, **kwargs):
+        calls.append((command, kwargs))
+        return subprocess.CompletedProcess(command, 0, stdout="Brock’s Turn – Poké Pad".encode())
+
+    monkeypatch.setattr(webapp.subprocess, "run", fake_run)
+
+    response = client.get("/clipboard", headers={"host": "127.0.0.1:8642"})
+    assert response.status_code == 200
+    assert response.text == "Brock’s Turn – Poké Pad"
+    assert calls[0][1]["env"]["LANG"] == "en_US.UTF-8"
+
+    assert client.get("/clipboard", headers={"host": "evil.example"}).status_code == 403
+    assert len(calls) == 1
