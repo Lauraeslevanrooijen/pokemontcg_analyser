@@ -24,9 +24,16 @@ struct Options {
     var showCursor = true
 }
 
+// Leaves at once. exit() runs clean-up handlers, and called from a
+// background thread while ScreenCaptureKit was failing it once hung the
+// process for days (still capturing the screen, ignoring Ctrl+C).
+func quit(_ code: Int32) -> Never {
+    _exit(code)
+}
+
 func fail(_ message: String) -> Never {
     FileHandle.standardError.write("error: \(message)\n".data(using: .utf8)!)
-    exit(1)
+    quit(1)
 }
 
 func log(_ message: String) {
@@ -254,6 +261,11 @@ final class Recorder: NSObject, SCStreamOutput, SCStreamDelegate {
             guard !self.stopping else { return }
             self.stopping = true
             self.timer?.cancel()
+            // However finishing goes, the process ends: a recorder that
+            // can't finish within this time won't, and must not linger.
+            DispatchQueue.global().asyncAfter(deadline: .now() + 30) {
+                fail("gave up finishing the file after 30 seconds")
+            }
             Task {
                 try? await self.stream?.stopCapture()
                 guard self.start.isValid else { fail("no frames were captured") }
@@ -277,7 +289,7 @@ final class Recorder: NSObject, SCStreamOutput, SCStreamDelegate {
                 // How many pictures the system delivered against how many
                 // were written says whether capture itself kept up.
                 log("done: delivered=\(self.delivered) written=\(self.written) seconds=\(String(format: "%.1f", Double(self.lastTick + 1) / Double(self.options.fps)))")
-                exit(0)
+                quit(0)
             }
         }
     }
@@ -295,21 +307,30 @@ if !CGPreflightScreenCaptureAccess() {
 
 let recorder = Recorder(options: options)
 
-// Ctrl+C and termination finish the file rather than cutting it off.
+// Ctrl+C and termination finish the file rather than cutting it off; a
+// second one ends the process straight away.
 var signalSources: [DispatchSourceSignal] = []
+var signalsReceived = 0
 for number in [SIGINT, SIGTERM] {
     signal(number, SIG_IGN)
     let source = DispatchSource.makeSignalSource(signal: number, queue: .main)
-    source.setEventHandler { recorder.stop() }
+    source.setEventHandler {
+        signalsReceived += 1
+        if signalsReceived > 1 { fail("stopped without finishing the file") }
+        recorder.stop()
+    }
     source.resume()
     signalSources.append(source)
 }
 
-// "q" on stdin stops too, which is how the app asks (same as ffmpeg).
+// "q" on stdin stops too, which is how the app asks (same as ffmpeg). So
+// does stdin closing: that means the app that started this recording is
+// gone, and nobody would ever ask it to stop.
 Thread.detachNewThread {
     while let line = readLine(strippingNewline: true) {
-        if line.contains("q") { recorder.stop(); return }
+        if line.contains("q") { break }
     }
+    recorder.stop()
 }
 
 Task {

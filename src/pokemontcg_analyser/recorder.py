@@ -124,8 +124,16 @@ def screen_devices() -> list[CaptureDevice]:
 
 
 def default_output_path(out_dir: Path) -> Path:
+    """A new file named after the moment it starts; never one that exists
+    already (two recordings started in the same second once wrote into one
+    file)."""
     timestamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
-    return out_dir / f"{timestamp}.mp4"
+    path = out_dir / f"{timestamp}.mp4"
+    number = 2
+    while path.exists() or path.with_suffix(".json").exists():
+        path = out_dir / f"{timestamp}-{number}.mp4"
+        number += 1
+    return path
 
 
 def _write_sidecar(
@@ -491,7 +499,7 @@ def start_recording(
             time.sleep(0.1)
         if recording.is_running:
             recording.process.kill()
-            recording.process.wait()
+            recording.process.wait(timeout=10)
         video_path.unlink(missing_ok=True)
         if "screen-recording-permission" in recording.log_tail():
             # ffmpeg would get nothing from the screen either (it hangs

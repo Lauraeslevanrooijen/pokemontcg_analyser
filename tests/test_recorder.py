@@ -278,3 +278,29 @@ def test_bundled_tools_are_preferred(tmp_path, monkeypatch) -> None:
 
     assert recorder.require_ffmpeg() == str(ffmpeg)
     assert recorder.capture_helper_path() == helper
+
+
+def test_output_path_never_reuses_a_file(tmp_path) -> None:
+    first = recorder.default_output_path(tmp_path)
+    first.write_bytes(b"")
+    second = recorder.default_output_path(tmp_path)
+
+    assert second != first and not second.exists()
+    assert second.stem.startswith(first.stem)
+
+
+def test_recorder_stops_when_the_app_that_started_it_goes_away(tmp_path, monkeypatch) -> None:
+    import subprocess
+
+    # stands in for the recorder: like the real one it reads stdin until a
+    # "q" or until stdin closes, then finishes
+    helper = tmp_path / "helper"
+    helper.write_text("#!/bin/sh\necho \"recording 10x10 at 30 fps\"\ncat > /dev/null\necho done\n")
+    helper.chmod(0o755)
+    monkeypatch.setattr(recorder, "capture_helper_path", lambda: helper)
+    recording = recorder.start_recording(3, tmp_path / "out", main_display=True)
+
+    recording.process.stdin.close()  # what happens when the app quits or forgets it
+    recording.process.wait(timeout=5)
+
+    assert recording.process.returncode == 0

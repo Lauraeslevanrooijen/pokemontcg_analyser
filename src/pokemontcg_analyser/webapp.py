@@ -44,6 +44,10 @@ VOICE_EXTENSIONS = {"audio/webm": "webm", "audio/mp4": "m4a", "audio/ogg": "ogg"
 # The one recording in progress, if any. Screen capture is a single shared
 # resource and this app is a single local process, so module state is enough.
 _recording: recorder.Recording | None = None
+# Held while a recording is being started, which takes a couple of seconds:
+# a second Start in that time once launched a second recorder that nothing
+# knew about, which kept recording for days.
+_start_lock = threading.Lock()
 # Why the last attempt to start a recording failed, shown on the start page
 # until the next attempt: {"permission": bool, "detail": str}.
 _recording_problem: dict | None = None
@@ -859,6 +863,15 @@ def start_recording(
 ):
     """Devices are chosen by name and looked up again here, so the choice
     still means the same device if the indexes moved since the page loaded."""
+    if not _start_lock.acquire(blocking=False):
+        raise HTTPException(status_code=409, detail="A recording is already being started")
+    try:
+        return _start_recording(screen, voice, microphone)
+    finally:
+        _start_lock.release()
+
+
+def _start_recording(screen: str, voice: bool, microphone: str):
     global _recording, _recording_problem
     _recording_problem = None
     if active_recording() is not None:

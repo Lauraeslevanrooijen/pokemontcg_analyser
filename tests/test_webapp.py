@@ -1166,3 +1166,29 @@ def test_stats_page_shows_record_per_opponent_type_and_lets_you_group(client: Te
     assert "Dragapult ex, Drakloak" in row  # what the type holds
     assert "1&ndash;1&ndash;0" in row
     assert against.count("<tr>") == 3  # header, Dragapult, Alakazam
+
+
+def test_a_second_start_while_one_is_starting_is_refused(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import threading
+
+    release = threading.Event()
+    started = []
+
+    def slow_start(device_index, out_dir, **options):
+        started.append(device_index)
+        release.wait(5)
+        return _FakeRecording(out_dir / "slow.mp4")
+
+    monkeypatch.setattr(recorder, "start_recording", slow_start)
+    first = threading.Thread(target=lambda: client.post("/recording/start", follow_redirects=False))
+    first.start()
+    while not started:
+        time.sleep(0.01)
+
+    assert client.post("/recording/start", follow_redirects=False).status_code == 409
+
+    release.set()
+    first.join()
+    assert started == [3]  # only one recorder was ever started
