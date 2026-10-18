@@ -59,9 +59,18 @@ def main() -> None:
     )
     app = DIST / f"{desktop.APP_NAME}.app"
     shutil.rmtree(DIST / desktop.APP_NAME, ignore_errors=True)  # PyInstaller's unbundled copy
-    # One ad-hoc signature over everything, so the permissions macOS asks
-    # for (screen recording, microphone) stick to the app.
+    # An ad-hoc signature over everything, so the permissions macOS asks
+    # for (screen recording, microphone) stick to the app. On its own, macOS
+    # knows an ad-hoc app only by a hash of this exact build, and every new
+    # version would lose its permission. Re-signing the app itself with a
+    # requirement on its bundle id keeps the permission across updates.
     subprocess.run(["codesign", "--force", "--deep", "--sign", "-", str(app)], check=True)
+    subprocess.run(
+        ["codesign", "--force", "--sign", "-",
+         f'-r=designated => identifier "{desktop.BUNDLE_ID}"', str(app)],
+        check=True,
+    )
+    subprocess.run(["codesign", "--verify", "--deep", "--strict", str(app)], check=True)
 
     # The .dmg: the app next to a shortcut to Applications, to drag across.
     volume = ROOT / "build" / "dmg"
