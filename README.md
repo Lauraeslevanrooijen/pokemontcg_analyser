@@ -1,129 +1,65 @@
 # PTCG Live Analyser
 
-Record your own Pokémon TCG Live matches and analyse them afterwards: build a
-turn-by-turn event timeline, recognise cards that appeared on screen, and
-track win/loss stats per deck over time.
+Record your own Pokémon TCG Live matches and analyse them afterwards: watch
+them back with notes and the battle log turn by turn, and track how your
+decks do over time. A macOS desktop app; everything stays on your Mac.
 
-## Status
+Players: see the **[user guide](docs/user-guide.md)** for installing the app
+and using it.
 
-Early scaffold. Working today:
+## What it does
 
-- `record` — screen-capture a Pokémon TCG Live session on macOS to an MP4,
-  with a JSON sidecar of when recording started.
-- `matches` — log match metadata (deck, opponent deck, result) to a local
-  SQLite database, list/summarise your stats, and attach timestamped notes
-  to a match for later review.
-- `cards sync` — fetch card data and pictures from [TCGdex](https://tcgdex.dev)
-  for your saved decklists. The Decks page also fetches them as needed.
-- `serve` — a local web app: start and stop a recording with a button (and
-  flag moments while it runs), log the match against it, then play the video
-  back and annotate it: labelled notes (misplay, good play, key moment, bad
-  luck, lucky topdeck, note), turn markers, who went first, and keyboard shortcuts so you never
-  leave the video. Spoken notes are recorded with the microphone and
-  stored in `recordings/voice/`. Mark where the game itself starts and trim
-  the menus before it off the recording (the untrimmed file is kept in
-  `recordings/originals/` for 14 days, then deleted).
-- Recording can include a microphone, for talking through your plays; the
-  match list shows each recording's size, can be searched and filtered, and
-  a recording can be deleted while its notes are kept.
-- A one-line lesson per match ("what do I take from this game"), shown on
-  the start page before the next game.
-- Stats and Moments pages in the web app: win rates per deck, per matchup
-  and by going first or second, misplays per reviewed game and per turn, and
-  every labelled moment across all matches with a link to that point in the
-  video.
-- Turn changes are found automatically when a match with a recording is
-  logged (and again on request with "Detect turns" on the review page),
-  from the ring around the playing field (its upper half lights up on the
-  opponent's turn, its lower half on yours), and fills in who went first.
-- Spoken notes are written out as text on this machine, using the card and
-  deck names you have saved as vocabulary. This needs the optional speech
-  model: `pip install -e ".[transcribe]"` (a few hundred MB on first use).
-- Battle log: paste the log the game lets you copy after a match, when
-  logging the match or on its review page. The timeline then shows what
-  happened in each turn, and the result and who went first come from the
-  log. The log has no timestamps; it lines up with the video through the
-  turn markers, and your own card plays are then looked for in the video
-  (the game shows a played card enlarged), so those lines jump to their
-  moment, and while the video plays the timeline follows along: the
-  current turn and the last play that has happened are marked. Any line of the log can be commented on and labelled, like
-  a note on the video. From the log the review page also shows the opening hand
-  and a chart of Prize cards taken per turn, the opponent's deck gets a
-  name when you gave none, and the Stats page compares opening hands across
-  games.
-- Matches can be corrected or deleted from their review page, and each
-  opponent deck can carry a note that shows on every match against it.
-- The Decks page shows what you actually play, from the battle logs: how
-  often each card is used, which listed cards never are, and which cards
-  the logs show that the saved list lacks. The Stats page shows turn tempo
-  and how many turns games take.
-- The database and spoken notes are copied once a day to iCloud Drive
-  (`PTCG Live Analyser backups`, or Documents without iCloud; set
-  `POKEMONTCG_BACKUP_DIR` for another place), keeping 14 days. Recordings
-  are not backed up, and can be set to be deleted after a number of weeks.
-- From the battle logs the Stats page also shows who takes the first Prize
-  card and when, in which of your turns your evolutions come into play, and
-  how many of your turns pass without an Energy or an attack; the Decks
-  page compares those per version of a list and gives the opening-hand odds
-  of the current list.
-- Opponents page: per type of deck played against, your record, your
-  note, and what they played. Deck names that are really the same deck can
-  be put under one type (on the Opponents and Decks pages) and then count
-  together in the stats. Weeks page: each week's record, lessons and misplays.
-- A match can be downloaded as a text file with its log, notes and lesson.
-- Records on the Stats page (fastest win, biggest comeback, longest
-  streak, most played card); games won from two or more Prize cards behind
-  or lost from as far ahead are marked. The start page shows your last ten
-  results, the current session and a lesson from further back; the Weeks
-  page groups matches into sessions; the Opponents page starts with the
-  decks met in the last four weeks; the Moments page lists words that keep
-  coming back in your misplays.
-- Decks page: save a decklist per deck with versions; matches count towards
-  the version that was current when they were logged, so a change to the
-  list shows up as a change in results.
-- `app` / `install-app` — run the same thing as a desktop app in its own
-  window instead of a browser tab, and install a double-clickable launcher
-  in `~/Applications`.
+- **Recording.** Start and stop a screen recording from the app, with your
+  voice if you like, and flag moments while you play. A small
+  ScreenCaptureKit recorder writes a smooth 30 fps video; the game can be
+  full screen or in a window. A recording you don't want can be discarded.
+- **Logging.** After a match, log it with one click on *Paste battle log*:
+  the result, who went first and the opponent's deck name come from the
+  log the game lets you copy.
+- **Reviewing.** The video with labelled notes (misplay, good play, key
+  moment, bad luck, lucky topdeck, note), spoken notes, turn markers and
+  keyboard shortcuts. Turn changes are found in the video automatically,
+  from the glow around the board. The battle log lines up with the video
+  through those turns: click a line to jump there, the log follows the
+  video, your own card plays are found in the frames, and any line can be
+  commented on. Also on the review page: opening hand, Prize race chart, a
+  one-line lesson, trimming the menus off the start, export as text.
+- **Decks.** Decklists in versions with card pictures from
+  [TCGdex](https://tcgdex.dev); results per version, which cards you really
+  play, and opening-hand odds.
+- **Opponents.** Your record and a note per type of opposing deck; deck
+  names that are the same deck can be grouped.
+- **Stats, Moments, Weeks.** Win rates by deck, matchup and turn order, game
+  length, tempo, first Prize, opening hands, misplays per turn, records and
+  comebacks; every labelled moment across matches; each week's record,
+  sessions and lessons.
+- **Housekeeping.** A daily backup of the database and spoken notes to iCloud
+  Drive (14 days kept; set `POKEMONTCG_BACKUP_DIR` for another place),
+  optional automatic deletion of old recordings, untrimmed originals
+  removed after 14 days.
+- **Spoken notes as text** (developer install only): written out on this
+  machine with faster-whisper, using your card and deck names as vocabulary;
+  `pip install -e ".[transcribe]"`.
 
-Not built yet: card recognition (matching video frames to specific cards)
-and automatic win/loss detection.
+Not built: recognising the opponent's cards in the video, and win/loss
+detection from the video (the battle log covers both).
 
-## Install the app (no setup needed)
+## Install the app
 
-For playing and reviewing, you don't need anything from the rest of this
-page. The app is a single download with everything inside it.
+Download `PTCG Live Analyser.dmg` from the Releases page, drag the app to
+Applications and allow it to record the screen. The
+[user guide](docs/user-guide.md#installing) has the steps. It needs a Mac
+with an Apple chip and macOS 14 or later.
 
-It needs a Mac with an Apple chip (M1 or newer) and macOS 14 or later.
-
-1. Download `PTCG Live Analyser.dmg` from the Releases page of this
-   repository and open it.
-2. Drag **PTCG Live Analyser** onto the **Applications** folder next to it.
-3. Open it from Applications. The first time, macOS says it cannot check
-   the app and refuses: the app is not signed with a paid Apple developer
-   account. Open **System Settings > Privacy & Security**, scroll down to
-   the message about PTCG Live Analyser and click **Open Anyway**. This is
-   only needed once.
-4. Click **Start recording**. macOS asks for permission to record the
-   screen. Allow it, quit the app (Cmd+Q) and open it again. From then on
-   recording works. If the request does not appear, the app shows the steps.
-
-Then: start a recording, play a match in Pokémon TCG Live, stop the
-recording, and log the match. Before leaving the game's summary screen,
-copy the battle log there and paste it in when logging.
-
-Good to know:
-
-- Everything stays on your Mac, in `Library/Application Support/Pokemon TCG
-  Analyser` in your home folder. Nothing is sent anywhere, apart from
-  fetching card pictures from TCGdex.
-- Spoken notes are saved but not written out as text in this version.
-- To update, download the new `.dmg` and replace the app. Your matches stay.
+Its data is kept in `~/Library/Application Support/PTCG Live Analyser`.
 
 To build the `.dmg` yourself from a checkout: `pip install -e ".[package]"`
 and `python packaging/build.py` (needs the Swift compiler, `xcode-select
---install`). The result is in `dist/`.
+--install`). The result is in `dist/`. The app is signed ad hoc, with a
+designated requirement on its bundle id so that macOS keeps its Screen
+Recording permission across updates.
 
-## Setup
+## Developer setup
 
 Requires Python 3.11+ and `ffmpeg` (`brew install ffmpeg`).
 
@@ -179,7 +115,7 @@ pokemontcg-analyser install-app
 
 ```
 src/pokemontcg_analyser/
-  recorder.py   screen capture (ffmpeg/avfoundation)
+  recorder.py   starts/stops recordings (ScreenCaptureKit helper, ffmpeg fallback), trimming
   cards.py      TCGdex card data + pictures, cached locally
   storage.py    SQLite schema + match logging/stats
   analysis.py   frame extraction
