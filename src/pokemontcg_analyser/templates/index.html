@@ -145,6 +145,11 @@
         <button type="button" class="secondary" id="log-paste"
                 title="Takes the battle log you copied in the game straight from the clipboard">Paste battle log</button>
         <button type="submit" data-busy="Logging…">Log match</button>
+        {% if unlogged %}
+          <button type="submit" class="secondary" id="discard-recording" formaction="/recordings/discard" formnovalidate
+                  title="Deletes the chosen recording without logging a match" data-busy="Discarding…"
+                  {{ '' if selected_video else 'hidden' }}>Discard recording</button>
+        {% endif %}
         <p id="log-status" class="muted" style="grid-column: 1 / -1; font-size: 0.85em; margin: 0;" hidden></p>
         <details style="grid-column: 1 / -1;" id="log-details">
           <summary class="muted" style="cursor: pointer; font-size: 0.85em;">Battle log (optional)</summary>
@@ -255,6 +260,18 @@
       </p>
     {% endif %}
   </div>
+  <script>
+    // "Discard recording" is only offered while a recording is chosen, and
+    // asks first: the video can not be brought back.
+    const discard = document.getElementById('discard-recording');
+    if (discard) {
+      const videoSelect = discard.form.querySelector('select[name="video_file"]');
+      videoSelect.addEventListener('change', () => { discard.hidden = !videoSelect.value; });
+      discard.addEventListener('click', (event) => {
+        if (!confirm(`Delete the recording ${videoSelect.value}? This can not be undone.`)) event.preventDefault();
+      });
+    }
+  </script>
   <script>
     // "Paste battle log" takes the log straight from the clipboard, without
     // opening the field first, and says what it found: a log is recognised

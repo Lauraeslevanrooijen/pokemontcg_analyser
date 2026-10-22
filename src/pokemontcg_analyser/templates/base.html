@@ -122,10 +122,12 @@
     // that it was heard: the button says what is happening and can't be
     // pressed twice.
     document.querySelectorAll('form').forEach((form) => {
-      const button = form.querySelector('button[data-busy]');
-      if (!button) return;
-      button.dataset.label = button.textContent;
-      form.addEventListener('submit', () => {
+      const buttons = form.querySelectorAll('button[data-busy]');
+      if (!buttons.length) return;
+      buttons.forEach((button) => { button.dataset.label = button.textContent; });
+      form.addEventListener('submit', (event) => {
+        // the button that was pressed, when a form has more than one
+        const button = event.submitter && event.submitter.dataset.busy ? event.submitter : buttons[0];
         button.disabled = true;
         button.classList.add('busy');
         button.textContent = button.dataset.busy;

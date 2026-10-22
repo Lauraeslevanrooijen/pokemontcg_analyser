@@ -1327,6 +1327,17 @@ def delete_recording(match_id: int):
     return RedirectResponse(f"/matches/{match_id}", status_code=303)
 
 
+@app.post("/recordings/discard")
+def discard_recording(video_file: str = Form("")):
+    """Throw away a recording that is not going to be logged."""
+    # Only recordings no match uses: never a logged match's video, and the
+    # name can not point outside the recordings folder.
+    if video_file not in unlogged_recordings(storage.list_matches(db_path=db_path())):
+        raise HTTPException(status_code=404, detail="No unlogged recording with that name")
+    _remove_recording(video_file)
+    return RedirectResponse("/", status_code=303)
+
+
 class MatchIn(BaseModel):
     deck: str
     opponent_deck: str = ""

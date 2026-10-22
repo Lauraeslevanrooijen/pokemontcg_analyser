@@ -1211,3 +1211,23 @@ def test_clipboard_is_read_for_this_computer_only(
 
     assert client.get("/clipboard", headers={"host": "evil.example"}).status_code == 403
     assert len(calls) == 1
+
+
+def test_discard_an_unlogged_recording(client: TestClient) -> None:
+    recordings = webapp.RECORDINGS_DIR
+    recordings.mkdir()
+    for name in ("spare.mp4", "spare.json", "spare.log", "kept.mp4"):
+        (recordings / name).write_bytes(b"x")
+    storage.log_match(deck="Pult", result="win", video_file="recordings/kept.mp4")
+
+    page = client.get("/")
+    assert 'id="discard-recording"' in page.text
+
+    response = client.post("/recordings/discard", data={"video_file": "spare.mp4"}, follow_redirects=False)
+    assert response.status_code == 303
+    assert sorted(p.name for p in recordings.iterdir()) == ["kept.mp4"]
+
+    # a logged match's video, or a name outside the folder, is never deleted
+    assert client.post("/recordings/discard", data={"video_file": "kept.mp4"}).status_code == 404
+    assert client.post("/recordings/discard", data={"video_file": "../matches.db"}).status_code == 404
+    assert (recordings / "kept.mp4").exists()
